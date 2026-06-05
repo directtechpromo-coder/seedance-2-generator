@@ -107,7 +107,7 @@ function CustomSelect({ label, value, options, onChange, icon: Icon }) {
 }
 
 export default function Home() {
-  const { data: session } = useSession();
+  const session = { user: { id: "guest-user-123", name: "Guest" } };
 
   // Mode State
   const [mode, setMode] = useState("text-to-video");
@@ -226,10 +226,7 @@ export default function Home() {
   };
 
   const handleGenerate = async () => {
-    if (!session) {
-      signIn();
-      return;
-    }
+  
     if (mode === "text-to-video" && !prompt.trim()) return;
     if (
       mode !== "text-to-video" &&
@@ -432,10 +429,7 @@ export default function Home() {
                   />
                   <button
                     onClick={() => {
-                      if (!session) {
-                        signIn();
-                        return;
-                      }
+                    
                       fileInputRef.current?.click();
                     }}
                     disabled={isUploading || imagesList.length >= 9}
@@ -505,10 +499,7 @@ export default function Home() {
                     />
                     <button
                       onClick={() => {
-                        if (!session) {
-                          signIn();
-                          return;
-                        }
+                      
                         videoInputRef.current?.click();
                       }}
                       disabled={isUploadingVideo || videoFiles.length >= 3}
@@ -583,10 +574,7 @@ export default function Home() {
                     />
                     <button
                       onClick={() => {
-                        if (!session) {
-                          signIn();
-                          return;
-                        }
+                     
                         audioInputRef.current?.click();
                       }}
                       disabled={isUploadingAudio || audioFiles.length >= 3}
