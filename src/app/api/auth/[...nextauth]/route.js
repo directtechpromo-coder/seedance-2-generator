@@ -1,6 +1,5 @@
-import NextAuth from "next-auth";
-import { authOptions } from "@/lib/auth";
+import { signIn } from "next-auth/react";
 
-const handler = NextAuth(authOptions);
-
-export { handler as GET, handler as POST };
+<button onClick={() => signIn("credentials", { callbackUrl: "/" })}>
+  Continue as Test User
+</button>
