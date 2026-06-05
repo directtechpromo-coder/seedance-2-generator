@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useSession } from "next-auth/react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   FaDownload,
@@ -16,7 +15,6 @@ import { downloadMedia } from "@/lib/utils";
 import { FiDownload } from "react-icons/fi";
 
 export default function CreationsPage() {
-  const { data: session, status } = useSession();
   const router = useRouter();
   const [creations, setCreations] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -24,12 +22,8 @@ export default function CreationsPage() {
   const [selectedImage, setSelectedImage] = useState(null);
 
   useEffect(() => {
-    if (status === "authenticated") {
-      fetchCreations();
-    } else if (status === "unauthenticated") {
-      router.push("/");
-    }
-  }, [status]);
+    fetchCreations();
+  }, []);
 
   const fetchCreations = async () => {
     try {
@@ -45,7 +39,7 @@ export default function CreationsPage() {
     }
   };
 
-  if (status === "loading" || loading) {
+  if (loading) {
     return (
       <div className="flex-1 flex items-center justify-center bg-transparent">
         <motion.div
@@ -146,7 +140,6 @@ export default function CreationsPage() {
         )}
       </div>
 
-      {/* Image Detail Modal */}
       <AnimatePresence>
         {selectedImage && (
           <motion.div
@@ -162,7 +155,6 @@ export default function CreationsPage() {
               className="relative max-w-6xl w-full h-full bg-glass-bg border border-glass-border rounded-xl overflow-hidden flex flex-col md:flex-row shadow-2xl backdrop-blur-3xl"
               onClick={(e) => e.stopPropagation()}
             >
-              {/* Image Side */}
               <div className="flex w-full md:w-[50%] h-[50%] md:h-full p-2 bg-glass-bg backdrop-blur-3xl flex border-b md:border-b-0 md:border-r border-glass-border">
                 {selectedImage.status === "completed" ? (
                   <video
@@ -175,12 +167,10 @@ export default function CreationsPage() {
                   />
                 ) : selectedImage.status === "failed" ? (
                   <div className="w-full h-full flex flex-col items-center justify-center bg-red-500/5 gap-4">
-                    <div className="w-16 h-16 rounded-2xl bg-red-500/10 flex items-center justify-center text-red-500 text-3xl">
-                      ✕
-                    </div>
+                    <div className="w-16 h-16 rounded-2xl bg-red-500/10 flex items-center justify-center text-red-500 text-3xl">✕</div>
                     <div className="text-center space-y-2">
                       <h3 className="text-sm font-bold text-red-500 uppercase tracking-widest">Generation Failed</h3>
-                      <p className="text-xs text-muted max-w-xs">{selectedImage.error || "An unknown error occurred during manifestation."}</p>
+                      <p className="text-xs text-muted max-w-xs">{selectedImage.error || "An unknown error occurred."}</p>
                     </div>
                   </div>
                 ) : (
@@ -199,18 +189,12 @@ export default function CreationsPage() {
                 )}
               </div>
 
-              {/* Details Side */}
               <div className="flex w-full md:w-[50%] h-[50%] md:h-full p-6 flex flex-col bg-glass-bg backdrop-blur-3xl overflow-y-auto custom-scrollbar">
                 <div className="flex flex-col justify-center space-y-4">
                   <div className="space-y-2">
-                    <div className="text-xs text-muted">
-                      MANIFEST PARAMETERS
-                    </div>
-                    <p className="text-sm font-normal text-foreground leading-relaxed">
-                      {selectedImage.prompt}
-                    </p>
+                    <div className="text-xs text-muted">MANIFEST PARAMETERS</div>
+                    <p className="text-sm font-normal text-foreground leading-relaxed">{selectedImage.prompt}</p>
                   </div>
-
                   <div className="space-y-6 border-t border-white/5 pt-10">
                     <div className="grid grid-cols-2 gap-8">
                       <div className="space-y-1.5">
@@ -230,77 +214,16 @@ export default function CreationsPage() {
                         <div className="text-xs text-foreground font-medium uppercase">{selectedImage.quality || "Basic"}</div>
                       </div>
                     </div>
-                    
-                    <div className="space-y-4 border-t border-glass-border pt-6">
-                      {selectedImage.inputImages?.length > 0 && (
-                        <div className="space-y-2">
-                          <div className="text-[9px] font-semibold text-muted uppercase tracking-widest">Image References</div>
-                          <div className="grid grid-cols-4 gap-2">
-                            {selectedImage.inputImages.map((img, i) => (
-                              <div key={i} className="relative aspect-square rounded-md bg-glass-hover overflow-hidden border border-glass-border group">
-                                <img src={img} className="w-full h-full object-cover" />
-                                <div className="absolute top-0 right-0 p-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                  <a href={img} target="_blank" rel="noopener noreferrer" className="p-1 bg-black/60 rounded flex items-center justify-center">
-                                    <FaExpandAlt className="text-[8px] text-white" />
-                                  </a>
-                                </div>
-                                <div className="absolute bottom-1 right-1 bg-black/60 px-1 rounded text-[8px] text-white">@image{i+1}</div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-
-                      {selectedImage.videoFiles?.length > 0 && (
-                        <div className="space-y-2">
-                          <div className="text-[9px] font-semibold text-muted uppercase tracking-widest">Video References</div>
-                          <div className="grid grid-cols-3 gap-2">
-                            {selectedImage.videoFiles.map((v, i) => (
-                              <div key={i} className="relative aspect-video rounded-md bg-glass-hover overflow-hidden border border-glass-border group">
-                                <video src={v} className="w-full h-full object-cover" />
-                                <div className="absolute top-0 right-0 p-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                  <a href={v} target="_blank" rel="noopener noreferrer" className="p-1 bg-black/60 rounded flex items-center justify-center">
-                                    <FaExpandAlt className="text-[8px] text-white" />
-                                  </a>
-                                </div>
-                                <div className="absolute bottom-1 right-1 bg-black/60 px-1 rounded text-[8px] text-white">@video{i+1}</div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-
-                      {selectedImage.audioFiles?.length > 0 && (
-                        <div className="space-y-2">
-                          <div className="text-[9px] font-semibold text-muted uppercase tracking-widest">Audio References</div>
-                          <div className="space-y-2">
-                            {selectedImage.audioFiles.map((a, i) => (
-                              <div key={i} className="flex items-center gap-2 p-2 rounded-md bg-glass-hover border border-glass-border">
-                                <FaMusic className="text-[10px] text-primary-500" />
-                                <span className="text-[10px] text-foreground truncate flex-1">{a.split('/').pop()}</span>
-                                <span className="text-[8px] text-muted font-bold">@audio{i+1}</span>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-
-                      <div className="space-y-1.5 pt-2">
-                        <div className="text-[9px] font-semibold text-muted uppercase tracking-widest">Timestamp</div>
-                        <div className="text-[11px] text-muted">
-                          {new Date(selectedImage.createdAt).toLocaleString('en-US', { 
-                            month: 'long', 
-                            day: 'numeric',
-                            year: 'numeric',
-                            hour: '2-digit',
-                            minute: '2-digit'
-                          })}
-                        </div>
+                    <div className="space-y-1.5 pt-2">
+                      <div className="text-[9px] font-semibold text-muted uppercase tracking-widest">Timestamp</div>
+                      <div className="text-[11px] text-muted">
+                        {new Date(selectedImage.createdAt).toLocaleString('en-US', {
+                          month: 'long', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit'
+                        })}
                       </div>
                     </div>
                   </div>
                 </div>
-
                 <div className="pt-12">
                   <button
                     onClick={async () => {
@@ -317,16 +240,15 @@ export default function CreationsPage() {
                     ) : (
                       <FiDownload size={16} />
                     )}
-                    {selectedImage.status === "completed" 
+                    {selectedImage.status === "completed"
                       ? (downloading ? "Extracting..." : "Download Piece")
-                      : selectedImage.status === "failed" 
-                        ? "Generation Failed" 
+                      : selectedImage.status === "failed"
+                        ? "Generation Failed"
                         : "Generating..."}
                   </button>
                 </div>
               </div>
 
-              {/* Close Button */}
               <button
                 onClick={() => setSelectedImage(null)}
                 className="absolute top-6 right-6 w-8 h-8 flex items-center justify-center text-muted hover:text-white transition-colors"
@@ -339,12 +261,8 @@ export default function CreationsPage() {
       </AnimatePresence>
 
       <style jsx global>{`
-        .custom-scrollbar::-webkit-scrollbar {
-          width: 0px;
-        }
-        .custom-scrollbar {
-          scrollbar-width: none;
-        }
+        .custom-scrollbar::-webkit-scrollbar { width: 0px; }
+        .custom-scrollbar { scrollbar-width: none; }
       `}</style>
     </div>
   );
