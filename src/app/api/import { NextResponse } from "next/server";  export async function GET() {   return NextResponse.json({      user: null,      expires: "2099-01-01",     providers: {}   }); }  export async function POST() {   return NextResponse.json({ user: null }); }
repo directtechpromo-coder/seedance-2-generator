@@ -1,0 +1,13 @@
+import { NextResponse } from "next/server";
+
+export async function GET() {
+  return NextResponse.json({ 
+    user: null, 
+    expires: "2099-01-01",
+    providers: {}
+  });
+}
+
+export async function POST() {
+  return NextResponse.json({ user: null });
+}
