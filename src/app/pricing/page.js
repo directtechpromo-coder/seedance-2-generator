@@ -1,13 +1,11 @@
 "use client";
 
 import { useState } from "react";
-import { useSession, signIn } from "next-auth/react";
 import { motion } from "framer-motion";
 import { FaBolt, FaCoins, FaCheckCircle, FaStar } from "react-icons/fa";
 import { useRouter } from "next/navigation";
 
 export default function PricingPage() {
-  const { data: session, status } = useSession();
   const router = useRouter();
   const [loadingTier, setLoadingTier] = useState(null);
 
@@ -54,11 +52,6 @@ export default function PricingPage() {
   ];
 
   const handleCheckout = async (price, credits, tierName) => {
-    if (status !== "authenticated") {
-      signIn();
-      return;
-    }
-
     try {
       setLoadingTier(tierName);
       const res = await fetch("/api/stripe/checkout", {
@@ -154,9 +147,7 @@ export default function PricingPage() {
             </div>
 
             <button
-              onClick={() =>
-                handleCheckout(tier.price, tier.credits, tier.name)
-              }
+              onClick={() => handleCheckout(tier.price, tier.credits, tier.name)}
               disabled={loadingTier === tier.name}
               className={`w-full h-12 rounded-xl font-semibold text-[10px] uppercase tracking-widest flex items-center justify-center gap-3 transition-all ${
                 tier.highlight
@@ -169,11 +160,7 @@ export default function PricingPage() {
               ) : (
                 <>
                   Purchase Credits{" "}
-                  <FaBolt
-                    className={
-                      tier.highlight ? "text-primary-500" : "text-muted"
-                    }
-                  />
+                  <FaBolt className={tier.highlight ? "text-primary-500" : "text-muted"} />
                 </>
               )}
             </button>
@@ -181,7 +168,6 @@ export default function PricingPage() {
         ))}
       </div>
 
-      {/* Credit Counter Hook */}
       <footer className="max-w-7xl mx-auto py-12 border-t border-glass-border flex flex-col md:flex-row items-center justify-between gap-8">
         <div className="space-y-2 text-center md:text-left">
           <div className="text-[10px] font-semibold tracking-[0.4em] text-muted uppercase">
@@ -190,7 +176,7 @@ export default function PricingPage() {
           <div className="text-lg font-medium flex items-center gap-3">
             Currently Holding:{" "}
             <span className="text-foreground font-semibold">
-              {session?.user?.credits || 0} Credits
+              1000 Credits
             </span>
           </div>
         </div>
