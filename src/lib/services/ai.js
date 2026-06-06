@@ -23,7 +23,7 @@ export const AIService = {
       resolution,
       duration: String(duration),
       aspect_ratio,
-      generate_audio: true,
+      generate_audio: false,
     };
 
     if (mode === "image-to-video" && images_list.length > 0) {
@@ -38,7 +38,6 @@ export const AIService = {
       }));
     }
 
-    // Synchronous call - direct video URL
     const res = await fetch(`https://fal.run/${modelId}`, {
       method: "POST",
       headers: {
