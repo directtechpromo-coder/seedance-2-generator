@@ -1,62 +1,95 @@
-import config from "@/lib/config";
-
 export const AIService = {
-  async generate(userId, { mode, prompt, aspect_ratio = "16:9", resolution = "720p", duration = 5, quality = "basic", images_list = [], video_files = [], audio_files = [] }) {
-    const apiKey = config.ai.seedance.apiKey;
+  async generate(userId, { mode, prompt, aspect_ratio = "16:9", resolution = "720p", duration = 5, quality = "basic", images_list = [] }) {
+    const apiKey = process.env.SEEDANCE_V2_API_KEY;
     if (!apiKey) throw new Error("SEEDANCE_V2_API_KEY is not configured");
 
-    let type;
-    if (mode === "text-to-video") type = "t2v";
-    else if (mode === "image-to-video") type = "i2v";
-    else if (mode === "reference-to-video") type = "reference";
-
-    const endpoint = config.ai.seedance.endpoints[type][resolution];
-    if (!endpoint) throw new Error(`Endpoint not found for mode: ${mode}`);
+    // Map mode to FAL endpoint
+    let modelId;
+    if (mode === "text-to-video") {
+      modelId = quality === "high"
+        ? "bytedance/seedance-2.0/text-to-video"
+        : "bytedance/seedance-2.0/fast/text-to-video";
+    } else if (mode === "image-to-video") {
+      modelId = quality === "high"
+        ? "bytedance/seedance-2.0/image-to-video"
+        : "bytedance/seedance-2.0/fast/image-to-video";
+    } else if (mode === "reference-to-video") {
+      modelId = quality === "high"
+        ? "bytedance/seedance-2.0/reference-to-video"
+        : "bytedance/seedance-2.0/fast/reference-to-video";
+    }
 
     const payload = {
       prompt,
+      resolution,
+      duration: String(duration),
       aspect_ratio,
-      duration: parseInt(duration),
-      quality
+      generate_audio: true,
     };
 
-    if (type === "i2v" || type === "reference") {
-      payload.images_list = images_list.slice(0, 9);
+    if (mode === "image-to-video" && images_list.length > 0) {
+      payload.image_url = images_list[0];
     }
 
-    const submitRes = await fetch(endpoint, {
+    if (mode === "reference-to-video" && images_list.length > 0) {
+      payload.reference_assets = images_list.slice(0, 9).map((url, i) => ({
+        type: "image",
+        url,
+        tag: `Image${i + 1}`,
+      }));
+    }
+
+    // Submit to FAL queue
+    const submitRes = await fetch(`https://queue.fal.run/${modelId}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        "x-api-key": apiKey,
+        "Authorization": `Key ${apiKey}`,
       },
       body: JSON.stringify(payload),
     });
 
     if (!submitRes.ok) {
       const errorText = await submitRes.text();
-      throw new Error(`API Submission Failed: ${submitRes.status} ${errorText}`);
+      throw new Error(`FAL API Submission Failed: ${submitRes.status} ${errorText}`);
     }
 
     const { request_id } = await submitRes.json();
-    if (!request_id) throw new Error("No request_id received from API");
+    if (!request_id) throw new Error("No request_id received from FAL API");
 
-    return { request_id };
+    // Store modelId in request_id for status checking
+    return { request_id: `${modelId}|||${request_id}` };
   },
 
   async checkStatus(requestId) {
-    const apiKey = config.ai.seedance.apiKey;
-    const res = await fetch(`https://api.muapi.ai/api/v1/request/${requestId}`, {
-      headers: { "x-api-key": apiKey },
+    const apiKey = process.env.SEEDANCE_V2_API_KEY;
+
+    // Parse modelId and actual requestId
+    const [modelId, actualRequestId] = requestId.includes("|||")
+      ? requestId.split("|||")
+      : ["bytedance/seedance-2.0/text-to-video", requestId];
+
+    const res = await fetch(`https://queue.fal.run/${modelId}/requests/${actualRequestId}/status`, {
+      headers: { "Authorization": `Key ${apiKey}` },
     });
 
     if (!res.ok) return { status: "processing" };
 
     const data = await res.json();
 
-    if (data.status === "completed" && (data.output_url || data.video_url)) {
-      return { status: "completed", imageUrl: data.output_url || data.video_url };
-    } else if (data.status === "failed") {
+    if (data.status === "COMPLETED") {
+      // Fetch the result
+      const resultRes = await fetch(`https://queue.fal.run/${modelId}/requests/${actualRequestId}`, {
+        headers: { "Authorization": `Key ${apiKey}` },
+      });
+      if (!resultRes.ok) return { status: "processing" };
+      const result = await resultRes.json();
+      const videoUrl = result?.video?.url || result?.video_url || result?.output?.url;
+      if (videoUrl) {
+        return { status: "completed", imageUrl: videoUrl };
+      }
+      return { status: "processing" };
+    } else if (data.status === "FAILED") {
       return { status: "failed" };
     }
 
