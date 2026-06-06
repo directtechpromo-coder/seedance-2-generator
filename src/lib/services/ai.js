@@ -3,7 +3,6 @@ export const AIService = {
     const apiKey = process.env.SEEDANCE_V2_API_KEY;
     if (!apiKey) throw new Error("SEEDANCE_V2_API_KEY is not configured");
 
-    // Map mode to FAL endpoint
     let modelId;
     if (mode === "text-to-video") {
       modelId = quality === "high"
@@ -39,8 +38,8 @@ export const AIService = {
       }));
     }
 
-    // Submit to FAL queue
-    const submitRes = await fetch(`https://queue.fal.run/${modelId}`, {
+    // Synchronous call - direct video URL
+    const res = await fetch(`https://fal.run/${modelId}`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -49,50 +48,23 @@ export const AIService = {
       body: JSON.stringify(payload),
     });
 
-    if (!submitRes.ok) {
-      const errorText = await submitRes.text();
-      throw new Error(`FAL API Submission Failed: ${submitRes.status} ${errorText}`);
+    if (!res.ok) {
+      const errorText = await res.text();
+      throw new Error(`FAL API Failed: ${res.status} ${errorText}`);
     }
 
-    const { request_id } = await submitRes.json();
-    if (!request_id) throw new Error("No request_id received from FAL API");
+    const data = await res.json();
+    const videoUrl = data?.video?.url;
 
-    // Store modelId in request_id for status checking
-    return { request_id: `${modelId}|||${request_id}` };
+    if (!videoUrl) throw new Error("No video URL received from FAL API");
+
+    return { 
+      request_id: "direct_result",
+      video_url: videoUrl
+    };
   },
 
   async checkStatus(requestId) {
-    const apiKey = process.env.SEEDANCE_V2_API_KEY;
-
-    // Parse modelId and actual requestId
-    const [modelId, actualRequestId] = requestId.includes("|||")
-      ? requestId.split("|||")
-      : ["bytedance/seedance-2.0/text-to-video", requestId];
-
-    const res = await fetch(`https://queue.fal.run/${modelId}/requests/${actualRequestId}/status`, {
-      headers: { "Authorization": `Key ${apiKey}` },
-    });
-
-    if (!res.ok) return { status: "processing" };
-
-    const data = await res.json();
-
-    if (data.status === "COMPLETED") {
-      // Fetch the result
-      const resultRes = await fetch(`https://queue.fal.run/${modelId}/requests/${actualRequestId}`, {
-        headers: { "Authorization": `Key ${apiKey}` },
-      });
-      if (!resultRes.ok) return { status: "processing" };
-      const result = await resultRes.json();
-      const videoUrl = result?.video?.url || result?.video_url || result?.output?.url;
-      if (videoUrl) {
-        return { status: "completed", imageUrl: videoUrl };
-      }
-      return { status: "processing" };
-    } else if (data.status === "FAILED") {
-      return { status: "failed" };
-    }
-
     return { status: "processing" };
   }
 };
