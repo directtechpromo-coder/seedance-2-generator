@@ -119,9 +119,14 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ mode, prompt, aspect_ratio: aspectRatio, resolution, duration, quality, images_list: imagesList }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Request failed.");
-      await pollStatus(data.request_id, data.metadata);
+     const data = await res.json();
+if (!res.ok) throw new Error(data.error || "Request failed.");
+if (data.video_url) {
+  setResultUrl(data.video_url);
+  setLoading(false);
+} else {
+  await pollStatus(data.request_id, data.metadata);
+}
     } catch (err) {
       setError(err.message);
       setLoading(false);
