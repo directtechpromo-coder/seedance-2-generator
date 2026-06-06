@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import {
-  FaBolt, FaMagic, FaChevronDown, FaPlus, FaTrash, FaSyncAlt, FaVideo, FaMusic,
+  FaBolt, FaMagic, FaChevronDown, FaPlus, FaTrash, FaSyncAlt, FaVideo, FaMusic, FaFilm,
 } from "react-icons/fa";
 import { IoImageOutline } from "react-icons/io5";
 import { FiDownload } from "react-icons/fi";
@@ -73,6 +73,8 @@ export default function Home() {
   const [statusMessage, setStatusMessage] = useState("");
   const [resultUrl, setResultUrl] = useState(null);
   const [error, setError] = useState(null);
+  const [stitchList, setStitchList] = useState([]);
+  const [stitching, setStitching] = useState(false);
 
   const MODES = [
     { id: "text-to-video", label: "Text", fullLabel: "Text to Video", icon: FaBolt },
@@ -119,17 +121,41 @@ export default function Home() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ mode, prompt, aspect_ratio: aspectRatio, resolution, duration, quality, images_list: imagesList }),
       });
-     const data = await res.json();
-if (!res.ok) throw new Error(data.error || "Request failed.");
-if (data.video_url) {
-  setResultUrl(data.video_url);
-  setLoading(false);
-} else {
-  await pollStatus(data.request_id, data.metadata);
-}
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Request failed.");
+      if (data.video_url) {
+        setResultUrl(data.video_url);
+        setLoading(false);
+      } else {
+        await pollStatus(data.request_id, data.metadata);
+      }
     } catch (err) {
       setError(err.message);
       setLoading(false);
+    }
+  };
+
+  const handleStitchAndDownload = async () => {
+    if (stitchList.length < 2) return;
+    try {
+      setStitching(true);
+      setError(null);
+      const res = await fetch("/api/stitch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ videoUrls: stitchList }),
+      });
+      if (!res.ok) throw new Error("Stitch failed");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `final-video-${Date.now()}.mp4`;
+      a.click();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setStitching(false);
     }
   };
 
@@ -265,10 +291,32 @@ if (data.video_url) {
             </div>
           </div>
 
+          {stitchList.length >= 2 && (
+            <button onClick={handleStitchAndDownload} disabled={stitching}
+              className="w-full bg-green-500 text-white rounded-md py-2 text-sm font-medium hover:bg-green-600 active:scale-[0.98] transition-all disabled:opacity-60 flex items-center justify-center gap-2">
+              {stitching
+                ? <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                : <><FaFilm /> Stitch & Download ({stitchList.length} clips)</>}
+            </button>
+          )}
+
           <button onClick={handleGenerate} disabled={loading || (mode === "text-to-video" && !prompt.trim())}
             className="w-full bg-primary-500 text-white rounded-md py-2 text-sm font-medium hover:bg-primary-600 active:scale-[0.98] transition-all disabled:opacity-60">
             {loading ? <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin mx-auto" /> : `Generate (${creditCost} Credits)`}
           </button>
+
+          {stitchList.length > 0 && (
+            <div className="space-y-1">
+              <p className="text-[10px] text-muted uppercase tracking-wider">Stitch Queue ({stitchList.length} clips)</p>
+              {stitchList.map((url, idx) => (
+                <div key={idx} className="flex items-center justify-between px-2 py-1 bg-glass-hover rounded text-[10px] text-muted border border-glass-border">
+                  <span>Clip {idx + 1}</span>
+                  <button onClick={() => setStitchList(stitchList.filter((_, i) => i !== idx))}
+                    className="text-red-400 hover:text-red-500">✕</button>
+                </div>
+              ))}
+            </div>
+          )}
 
           {error && <p className="text-[10px] text-red-500 font-medium text-center">{error}</p>}
         </div>
@@ -287,10 +335,23 @@ if (data.video_url) {
                     </button>
                   </div>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex gap-2 flex-wrap justify-center">
                   <span className="px-2 py-1 bg-primary-500/10 text-primary-500 text-[10px] font-medium rounded uppercase">{aspectRatio}</span>
                   <span className="px-2 py-1 bg-glass-hover text-muted text-[10px] font-medium rounded uppercase">{resolution}</span>
                 </div>
+                <button
+                  onClick={() => {
+                    if (!stitchList.includes(resultUrl)) {
+                      setStitchList([...stitchList, resultUrl]);
+                    }
+                  }}
+                  className={`w-full py-2 rounded-md text-xs font-medium transition-colors border ${
+                    stitchList.includes(resultUrl)
+                      ? "bg-green-500/20 border-green-500/30 text-green-400"
+                      : "bg-glass-bg border-glass-border text-muted hover:text-foreground hover:bg-glass-hover"
+                  }`}>
+                  {stitchList.includes(resultUrl) ? `✓ Added (${stitchList.length} in queue)` : `+ Add to Stitch Queue`}
+                </button>
               </div>
             ) : loading ? (
               <div className="flex flex-col items-center gap-4">
