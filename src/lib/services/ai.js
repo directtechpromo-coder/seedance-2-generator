@@ -23,7 +23,7 @@ export const AIService = {
       resolution,
       duration: String(duration),
       aspect_ratio,
-      generate_audio: true,
+      generate_audio: false,
     };
 
     if (mode === "image-to-video" && images_list.length > 0) {
