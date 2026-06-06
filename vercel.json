@@ -1,0 +1,7 @@
+{
+  "functions": {
+    "src/app/api/seedance/route.js": {
+      "maxDuration": 300
+    }
+  }
+}
