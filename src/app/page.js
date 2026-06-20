@@ -65,6 +65,7 @@ export default function Home() {
   const [resolution, setResolution] = useState(RESOLUTIONS[1].value);
   const [duration, setDuration] = useState(DURATIONS[0].value);
   const [quality, setQuality] = useState(QUALITIES[0].value);
+  const [generateAudio, setGenerateAudio] = useState(false); // NEW: audio toggle
   const [imagesList, setImagesList] = useState([]);
   const [newImageUrl, setNewImageUrl] = useState("");
   const [isUploading, setIsUploading] = useState(false);
@@ -119,10 +120,27 @@ export default function Home() {
       const res = await fetch("/api/seedance", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ mode, prompt, aspect_ratio: aspectRatio, resolution, duration, quality, images_list: imagesList }),
+        body: JSON.stringify({
+          mode,
+          prompt,
+          aspect_ratio: aspectRatio,
+          resolution,
+          duration,
+          quality,
+          images_list: imagesList,
+          generate_audio: generateAudio, // NEW
+        }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Request failed.");
+
+      // NEW: handle auto-split response (Veo 3.1 audio clips > 8s come back as two clips)
+      if (data.clips && Array.isArray(data.clips)) {
+        setStatusMessage(`Audio clip split into 2 parts (Veo 3.1 max 8s/clip). Processing both...`);
+        await pollMultipleClips(data.clips, data.metadata);
+        return;
+      }
+
       if (data.video_url) {
         setResultUrl(data.video_url);
         setLoading(false);
@@ -172,11 +190,48 @@ export default function Home() {
       if (data.status === "completed") {
         setResultUrl(data.imageUrl);
         setLoading(false);
+        return data.imageUrl;
       } else if (data.status === "failed") {
         throw new Error("Generation failed.");
       } else {
-        setTimeout(() => pollStatus(requestId, metadata), 3000);
+        await new Promise((r) => setTimeout(r, 3000));
+        return await pollStatus(requestId, metadata);
       }
+    } catch (err) {
+      setError(err.message);
+      setLoading(false);
+      throw err;
+    }
+  };
+
+  // NEW: poll two clips in parallel (for auto-split Veo audio clips), then auto-add
+  // both to the Stitch Queue in correct order (A then B) once both are done.
+  const pollSingleClipSilently = async (requestId, metadata) => {
+    const res = await fetch("/api/seedance/check-status", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ requestId, metadata }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || "Status check failed.");
+    if (data.status === "completed") return data.imageUrl;
+    if (data.status === "failed") throw new Error("Generation failed.");
+    await new Promise((r) => setTimeout(r, 3000));
+    return await pollSingleClipSilently(requestId, metadata);
+  };
+
+  const pollMultipleClips = async (clips, metadata) => {
+    try {
+      // clips is [{request_id, part: "A", duration}, {request_id, part: "B", duration}]
+      const sorted = [...clips].sort((a, b) => (a.part < b.part ? -1 : 1));
+      const urls = await Promise.all(
+        sorted.map((c) => pollSingleClipSilently(c.request_id, metadata))
+      );
+      // Show the first clip as preview, and queue both for stitching in order.
+      setResultUrl(urls[0]);
+      setStitchList((prev) => [...prev, ...urls.filter((u) => !prev.includes(u))]);
+      setStatusMessage("");
+      setLoading(false);
     } catch (err) {
       setError(err.message);
       setLoading(false);
@@ -289,6 +344,31 @@ export default function Home() {
               <CustomSelect label="Duration" value={duration} options={getAvailableDurations()} onChange={setDuration} />
               <CustomSelect label="Quality" value={quality} options={QUALITIES} onChange={setQuality} />
             </div>
+
+            {/* NEW: Audio toggle */}
+            <div className="flex items-center justify-between px-3 py-2.5 bg-glass-bg border border-glass-border rounded-md">
+              <div className="flex items-center gap-2">
+                <FaMusic className="text-primary-500 text-xs" />
+                <div>
+                  <p className="text-xs font-medium text-foreground">Generate with Audio</p>
+                  <p className="text-[10px] text-muted">
+                    {generateAudio
+                      ? "Veo 3.1 — native audio + lip-sync (clips >8s auto-split)"
+                      : "Wan 2.2 — silent, lower cost"}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => setGenerateAudio(!generateAudio)}
+                className={`w-11 h-6 rounded-full relative transition-colors shrink-0 ${generateAudio ? "bg-primary-500" : "bg-glass-hover border border-glass-border"}`}
+              >
+                <motion.div
+                  className="absolute top-0.5 w-5 h-5 bg-white rounded-full shadow"
+                  animate={{ left: generateAudio ? "22px" : "2px" }}
+                  transition={{ type: "spring", stiffness: 500, damping: 30 }}
+                />
+              </button>
+            </div>
           </div>
 
           {stitchList.length >= 2 && (
@@ -338,6 +418,7 @@ export default function Home() {
                 <div className="flex gap-2 flex-wrap justify-center">
                   <span className="px-2 py-1 bg-primary-500/10 text-primary-500 text-[10px] font-medium rounded uppercase">{aspectRatio}</span>
                   <span className="px-2 py-1 bg-glass-hover text-muted text-[10px] font-medium rounded uppercase">{resolution}</span>
+                  {generateAudio && <span className="px-2 py-1 bg-glass-hover text-muted text-[10px] font-medium rounded uppercase">Audio</span>}
                 </div>
                 <button
                   onClick={() => {
