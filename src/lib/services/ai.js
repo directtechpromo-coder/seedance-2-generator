@@ -7,7 +7,7 @@
 // `model` controls which backend is used: "seedance" (default, original behavior) or "wan" (Wan 2.2, cheaper).
 // `mode` controls which type of generation: "text-to-video", "image-to-video", or "reference-to-video".
 
-const FAL_API_KEY = process.env.FAL_API_KEY; // must be set in Vercel env vars
+const FAL_API_KEY = process.env.SEEDANCE_V2_API_KEY; // must be set in Vercel env vars
 
 // Endpoint map: [model][mode] -> FAL endpoint URL
 const ENDPOINTS = {
@@ -73,9 +73,12 @@ async function generate(userId, options = {}) {
     resolution = "720p",
     duration = 5,
     quality = "fast",
-    model = "seedance",
     generate_audio = true,
   } = options;
+
+  // Hardcoded: always use Wan 2.2 regardless of what the frontend/route sends.
+  // To switch back to Seedance later, change this line to: const model = "seedance";
+  const model = "wan";
 
   if (!FAL_API_KEY) {
     throw new Error("FAL_API_KEY is not set in environment variables");
@@ -164,7 +167,7 @@ async function generate(userId, options = {}) {
 /**
  * Estimate cost in USD before calling the API. Used for UI cost previews.
  */
-function estimateCost({ model = "seedance", tier = "fast", resolution = "720p", duration = 5 }) {
+function estimateCost({ model = "wan", tier = "fast", resolution = "720p", duration = 5 }) {
   const clipDuration = Math.min(Math.max(Number(duration) || 5, 1), 15);
 
   if (model === "seedance") {
