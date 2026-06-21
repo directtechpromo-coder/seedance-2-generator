@@ -84,6 +84,7 @@ export default function Home() {
   // NEW: Multi-Scene Mode (for long videos built from multiple [SCENE N] blocks)
   const [multiSceneMode, setMultiSceneMode] = useState(false);
   const [scriptText, setScriptText] = useState("");
+  const [characterBible, setCharacterBible] = useState(""); // NEW: character descriptions, auto-prepended to every scene
   const [negativePrompt, setNegativePrompt] = useState(""); // NEW: helps keep style consistent across scenes
   const [sceneResults, setSceneResults] = useState([]); // [{index, status: 'pending'|'generating'|'done'|'failed', url, error}]
   const [multiSceneRunning, setMultiSceneRunning] = useState(false);
@@ -360,12 +361,18 @@ export default function Home() {
       });
 
       try {
+        // NEW: Prepend the Character Bible to every scene's prompt so character
+        // descriptions stay consistent across all generations without manual repetition.
+        const fullScenePrompt = characterBible.trim()
+          ? `${characterBible.trim()}\n\n${scenes[i]}`
+          : scenes[i];
+
         const res = await fetch("/api/seedance", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             mode: "text-to-video",
-            prompt: scenes[i],
+            prompt: fullScenePrompt,
             negative_prompt: negativePrompt || undefined,
             aspect_ratio: aspectRatio,
             resolution,
@@ -477,12 +484,27 @@ export default function Home() {
             <div className="space-y-4">
               <div className="space-y-1.5">
                 <label className="text-[10px] font-medium text-muted uppercase tracking-wider">
+                  Character Bible (auto-prepended to every scene — define each character once here)
+                </label>
+                <textarea
+                  value={characterBible}
+                  onChange={(e) => setCharacterBible(e.target.value)}
+                  placeholder={"2D flat cartoon animation style, cel-shaded, bright colors.\nCHARACTER_RAZA: a cartoon boy with round black glasses, spiky messy orange hair, wearing a blue striped shirt and brown shorts.\nCHARACTER_SARA: a cartoon girl with two black pigtails tied with red ribbons, wearing a yellow frock with white polka dots."}
+                  className="w-full h-28 bg-glass-bg border border-glass-border rounded-md p-2 text-sm outline-none focus:border-primary-500/40 resize-none transition-colors custom-scrollbar"
+                />
+                <p className="text-[10px] text-muted">
+                  This text is automatically added to the start of every scene's prompt — write each scene below using just the character names (e.g. CHARACTER_RAZA) and the action, no need to repeat the full description.
+                </p>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-medium text-muted uppercase tracking-wider">
                   Script (use [SCENE 1], [SCENE 2]... to separate scenes — each becomes one 8s clip)
                 </label>
                 <textarea
                   value={scriptText}
                   onChange={(e) => setScriptText(e.target.value)}
-                  placeholder={"[SCENE 1]\nTwo men sitting at a chai stall discussing inflation...\n\n[SCENE 2]\nClose-up of one man's frustrated face as he gestures...\n\n[SCENE 3]\nWide shot of busy street with motorcycles passing by..."}
+                  placeholder={"[SCENE 1]\nCHARACTER_RAZA runs into a cozy living room excitedly, waving a piece of paper, speaking loudly in Urdu\n\n[SCENE 2]\nCHARACTER_SARA turns around curiously from the couch, asking a question in Urdu\n\n[SCENE 3]\nCHARACTER_RAZA shows the paper to CHARACTER_SARA, both look at it together, speaking excitedly in Urdu"}
                   className="w-full h-56 bg-glass-bg border border-glass-border rounded-md p-2 text-sm outline-none focus:border-primary-500/40 resize-none transition-colors custom-scrollbar"
                 />
                 <p className="text-[10px] text-muted">
