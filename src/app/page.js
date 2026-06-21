@@ -84,6 +84,7 @@ export default function Home() {
   // NEW: Multi-Scene Mode (for long videos built from multiple [SCENE N] blocks)
   const [multiSceneMode, setMultiSceneMode] = useState(false);
   const [scriptText, setScriptText] = useState("");
+  const [negativePrompt, setNegativePrompt] = useState(""); // NEW: helps keep style consistent across scenes
   const [sceneResults, setSceneResults] = useState([]); // [{index, status: 'pending'|'generating'|'done'|'failed', url, error}]
   const [multiSceneRunning, setMultiSceneRunning] = useState(false);
   const [multiSceneCancelRef] = useState({ current: false }); // mutable flag to allow stopping the loop
@@ -365,6 +366,7 @@ export default function Home() {
           body: JSON.stringify({
             mode: "text-to-video",
             prompt: scenes[i],
+            negative_prompt: negativePrompt || undefined,
             aspect_ratio: aspectRatio,
             resolution,
             duration: 8, // fixed: each scene is a single Veo clip, capped at 8s
@@ -487,6 +489,19 @@ export default function Home() {
                   {parseScenes(scriptText).length} scene(s) detected · ~{parseScenes(scriptText).length * 8}s total ·
                   est. ${(parseScenes(scriptText).length * 1.2).toFixed(2)}
                 </p>
+              </div>
+
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-medium text-muted uppercase tracking-wider">
+                  Negative Prompt (keeps style consistent across all scenes)
+                </label>
+                <input
+                  type="text"
+                  value={negativePrompt}
+                  onChange={(e) => setNegativePrompt(e.target.value)}
+                  placeholder="e.g. realistic, photorealistic, live-action, 3D render, human skin texture"
+                  className="w-full bg-glass-bg border border-glass-border rounded-md px-3 py-2 text-xs outline-none focus:border-primary-500/40"
+                />
               </div>
 
               {sceneResults.length > 0 && (
