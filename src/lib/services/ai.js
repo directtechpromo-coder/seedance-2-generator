@@ -113,15 +113,25 @@ async function submitClip({ modelKey, modeKey, prompt, images_list, aspect_ratio
   }
 
   const data = await response.json();
-  // queue.fal.run submission responses include a `request_id` field
+  // queue.fal.run submission responses include request_id, status_url, and response_url.
+  // We use FAL's own provided URLs directly instead of reconstructing them, since the
+  // path format for status/result checks doesn't always match the submission path
+  // (e.g. some models need the subpath stripped, others don't).
   const actualRequestId = data?.request_id;
+  const statusUrl = data?.status_url;
+  const responseUrl = data?.response_url;
 
   if (!actualRequestId) {
     throw new Error(`No request_id returned from FAL.ai: ${JSON.stringify(data)}`);
   }
 
+  // Encode everything needed into one string: modelId|||requestId|||statusUrl|||responseUrl
+  // (statusUrl/responseUrl may be absent for older models; check-status falls back to
+  // reconstructing the URL from modelId in that case.)
+  const encodedId = [modelId, actualRequestId, statusUrl || "", responseUrl || ""].join("|||");
+
   return {
-    request_id: `${modelId}|||${actualRequestId}`,
+    request_id: encodedId,
     model: modelKey,
     mode: modeKey,
     duration: clipDuration,
