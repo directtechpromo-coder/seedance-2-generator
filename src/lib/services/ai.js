@@ -61,7 +61,7 @@ function resolveModelAndMode({ generate_audio, mode }) {
  * Returns { request_id } where request_id is encoded as "modelId|||actualRequestId"
  * to match what check-status/route.js expects.
  */
-async function submitClip({ modelKey, modeKey, prompt, images_list, aspect_ratio, resolution, clipDuration }) {
+async function submitClip({ modelKey, modeKey, prompt, negative_prompt, images_list, aspect_ratio, resolution, clipDuration }) {
   const endpoint = QUEUE_ENDPOINTS[modelKey][modeKey];
   const modelId = MODEL_IDS[modelKey][modeKey];
 
@@ -81,6 +81,9 @@ async function submitClip({ modelKey, modeKey, prompt, images_list, aspect_ratio
       resolution: resolution === "1080p" ? "1080p" : "720p",
       generate_audio: true,
     };
+    if (negative_prompt) {
+      body.negative_prompt = negative_prompt;
+    }
     if (images_list && images_list.length > 0) {
       body.image_url = images_list[0];
     }
@@ -99,6 +102,9 @@ async function submitClip({ modelKey, modeKey, prompt, images_list, aspect_ratio
       aspect_ratio,
       resolution: wanResolution,
     };
+    if (negative_prompt) {
+      body.negative_prompt = negative_prompt;
+    }
     if (images_list && images_list.length > 0) {
       body.image_url = images_list[0];
     }
@@ -159,6 +165,7 @@ async function generate(userId, options = {}) {
   const {
     mode = "text-to-video",
     prompt,
+    negative_prompt,
     images_list,
     aspect_ratio = "16:9",
     resolution = "720p",
@@ -191,6 +198,7 @@ async function generate(userId, options = {}) {
       modelKey,
       modeKey,
       prompt,
+      negative_prompt,
       images_list,
       aspect_ratio,
       resolution,
@@ -226,6 +234,7 @@ async function generate(userId, options = {}) {
     modelKey,
     modeKey,
     prompt,
+    negative_prompt,
     images_list,
     aspect_ratio,
     resolution,
@@ -236,6 +245,7 @@ async function generate(userId, options = {}) {
     modelKey,
     modeKey,
     prompt,
+    negative_prompt,
     images_list,
     aspect_ratio,
     resolution,
