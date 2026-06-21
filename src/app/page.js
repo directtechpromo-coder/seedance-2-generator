@@ -8,6 +8,8 @@ import { IoImageOutline } from "react-icons/io5";
 import { FiDownload } from "react-icons/fi";
 import { motion, AnimatePresence } from "framer-motion";
 import { downloadMedia } from "@/lib/utils";
+import { FFmpeg } from "@ffmpeg/ffmpeg";
+import { fetchFile, toBlobURL } from "@ffmpeg/util";
 
 const ASPECT_RATIOS = [
   { label: "16:9", value: "16:9" }, { label: "9:16", value: "9:16" },
@@ -76,6 +78,8 @@ export default function Home() {
   const [error, setError] = useState(null);
   const [stitchList, setStitchList] = useState([]);
   const [stitching, setStitching] = useState(false);
+  const [stitchProgress, setStitchProgress] = useState(""); // NEW: client-side stitch progress text
+  const ffmpegRef = useRef(null); // NEW: holds the loaded FFmpeg.wasm instance (loaded once, reused)
 
   const MODES = [
     { id: "text-to-video", label: "Text", fullLabel: "Text to Video", icon: FaBolt },
@@ -153,25 +157,85 @@ export default function Home() {
     }
   };
 
+  // NEW: Loads FFmpeg.wasm once and caches it in ffmpegRef for reuse across multiple stitch operations.
+  const loadFFmpeg = async () => {
+    if (ffmpegRef.current) return ffmpegRef.current;
+    const ffmpeg = new FFmpeg();
+    const baseURL = "https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd";
+    ffmpeg.on("log", ({ message }) => {
+      console.log("[FFmpeg]", message);
+    });
+    await ffmpeg.load({
+      coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, "text/javascript"),
+      wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, "application/wasm"),
+    });
+    ffmpegRef.current = ffmpeg;
+    return ffmpeg;
+  };
+
+  // NEW: Client-side stitching using FFmpeg.wasm. Downloads each clip, re-encodes them to a
+  // consistent format, concatenates properly (not just byte-concatenation), and triggers download.
+  // This runs entirely in the browser — no server timeout risk on Vercel Hobby plan.
   const handleStitchAndDownload = async () => {
     if (stitchList.length < 2) return;
     try {
       setStitching(true);
       setError(null);
-      const res = await fetch("/api/stitch", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ videoUrls: stitchList }),
-      });
-      if (!res.ok) throw new Error("Stitch failed");
-      const blob = await res.blob();
+      setStitchProgress("Loading video engine...");
+
+      const ffmpeg = await loadFFmpeg();
+
+      // Step 1: download and write each clip into FFmpeg's virtual filesystem
+      const inputNames = [];
+      for (let i = 0; i < stitchList.length; i++) {
+        setStitchProgress(`Downloading clip ${i + 1} of ${stitchList.length}...`);
+        const fileData = await fetchFile(stitchList[i]);
+        const inputName = `input${i}.mp4`;
+        await ffmpeg.writeFile(inputName, fileData);
+        inputNames.push(inputName);
+      }
+
+      // Step 2: build a concat list file (FFmpeg's concat demuxer format)
+      const concatListContent = inputNames.map((name) => `file '${name}'`).join("\n");
+      await ffmpeg.writeFile("concat_list.txt", concatListContent);
+
+      // Step 3: re-encode + concatenate. Using the concat filter (via re-encode) instead of
+      // stream-copy concat demuxer, because clips may come from different models (Wan/Veo)
+      // with potentially different codecs/parameters — re-encoding guarantees compatibility.
+      setStitchProgress("Stitching clips together... (this may take 20-40 sec)");
+      await ffmpeg.exec([
+        "-f", "concat",
+        "-safe", "0",
+        "-i", "concat_list.txt",
+        "-c:v", "libx264",
+        "-c:a", "aac",
+        "-movflags", "+faststart",
+        "output.mp4",
+      ]);
+
+      // Step 4: read the result and trigger download
+      setStitchProgress("Finalizing...");
+      const data = await ffmpeg.readFile("output.mp4");
+      const blob = new Blob([data.buffer], { type: "video/mp4" });
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
       a.download = `final-video-${Date.now()}.mp4`;
       a.click();
+      URL.revokeObjectURL(url);
+
+      // Cleanup virtual filesystem for next run
+      for (const name of inputNames) {
+        await ffmpeg.deleteFile(name).catch(() => {});
+      }
+      await ffmpeg.deleteFile("concat_list.txt").catch(() => {});
+      await ffmpeg.deleteFile("output.mp4").catch(() => {});
+
+      setStitchProgress("");
     } catch (err) {
-      setError(err.message);
+      console.error("[STITCH_CLIENT]", err);
+      setError(err.message || "Stitching failed. Try again.");
+      setStitchProgress("");
     } finally {
       setStitching(false);
     }
@@ -375,7 +439,12 @@ export default function Home() {
             <button onClick={handleStitchAndDownload} disabled={stitching}
               className="w-full bg-green-500 text-white rounded-md py-2 text-sm font-medium hover:bg-green-600 active:scale-[0.98] transition-all disabled:opacity-60 flex items-center justify-center gap-2">
               {stitching
-                ? <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                ? (
+                  <>
+                    <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    <span className="text-xs">{stitchProgress || "Processing..."}</span>
+                  </>
+                )
                 : <><FaFilm /> Stitch & Download ({stitchList.length} clips)</>}
             </button>
           )}
