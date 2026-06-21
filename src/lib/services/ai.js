@@ -48,6 +48,7 @@ const MODEL_IDS = {
 };
 
 const VEO_MAX_DURATION = 8; // Veo 3.1 Fast hard limit per single generation
+const WAN_MAX_DURATION = 10; // Wan 2.2 a14b hard limit: 161 frames / 16fps ≈ 10.06s, rounded down to be safe
 
 function resolveModelAndMode({ generate_audio, mode }) {
   const modelKey = generate_audio ? "veo" : "wan";
@@ -78,11 +79,17 @@ async function submitClip({ modelKey, modeKey, prompt, images_list, aspect_ratio
       body.image_url = images_list[0];
     }
   } else {
+    // Wan 2.2 (a14b) does NOT accept a `duration` parameter — it uses num_frames + frames_per_second.
+    // Video length in seconds = num_frames / frames_per_second. Valid num_frames range: 17–161.
+    const FPS = 16; // matches FAL's documented billing rate (seconds billed at 16fps)
+    const numFrames = Math.min(Math.max(Math.round(clipDuration * FPS), 17), 161);
+
     const validResolutions = ["480p", "580p", "720p"];
     const wanResolution = validResolutions.includes(resolution) ? resolution : "720p";
     body = {
       prompt,
-      duration: clipDuration,
+      num_frames: numFrames,
+      frames_per_second: FPS,
       aspect_ratio,
       resolution: wanResolution,
     };
@@ -160,9 +167,10 @@ async function generate(userId, options = {}) {
 
   const { modelKey, modeKey } = resolveModelAndMode({ generate_audio, mode });
   const totalDuration = Math.min(Math.max(Number(duration) || 5, 1), 15);
+  const maxPerClip = modelKey === "veo" ? VEO_MAX_DURATION : WAN_MAX_DURATION;
 
-  // Case 1: Wan (silent) or Veo with duration <= 8 -> single submission, single request_id.
-  if (modelKey === "wan" || totalDuration <= VEO_MAX_DURATION) {
+  // Case 1: duration fits in a single clip for this model -> single submission, single request_id.
+  if (totalDuration <= maxPerClip) {
     const clip = await submitClip({
       modelKey,
       modeKey,
@@ -185,9 +193,9 @@ async function generate(userId, options = {}) {
     };
   }
 
-  // Case 2: Veo + duration > 8 -> auto-split into two submissions (Clip A: 8s, Clip B: remainder).
-  const durationA = VEO_MAX_DURATION;
-  const durationB = totalDuration - VEO_MAX_DURATION;
+  // Case 2: duration exceeds this model's per-clip cap -> auto-split into two submissions.
+  const durationA = maxPerClip;
+  const durationB = totalDuration - maxPerClip;
 
   const clipA = await submitClip({
     modelKey,
@@ -221,7 +229,7 @@ async function generate(userId, options = {}) {
       duration: totalDuration,
       generate_audio: true,
       split: true,
-      note: "Auto-split into 2 clips because Veo 3.1 caps at 8s per clip. Poll both request_ids, then use the Stitch Queue to combine them in order (A then B).",
+      note: `Auto-split into 2 clips because ${modelKey === "veo" ? "Veo 3.1 caps at 8s" : "Wan 2.2 caps at ~10s"} per clip. Poll both request_ids, then use the Stitch Queue to combine them in order (A then B).`,
     },
   };
 }
