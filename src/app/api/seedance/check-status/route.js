@@ -8,51 +8,43 @@ export async function POST(req) {
     }
     const apiKey = process.env.SEEDANCE_V2_API_KEY;
 
-    // Parse modelId and actual requestId (format: modelId|||requestId)
-    const [fullModelId, actualRequestId] = requestId.includes("|||")
-      ? requestId.split("|||")
-      : ["bytedance/seedance-2.0/text-to-video", requestId];
+    // New format: modelId|||actualRequestId|||statusUrl|||responseUrl
+    // Old format (backward compat): modelId|||actualRequestId
+    const parts = requestId.includes("|||") ? requestId.split("|||") : [null, requestId];
+    const [fullModelId, actualRequestId, providedStatusUrl, providedResponseUrl] = parts;
+    const modelIdForFallback = fullModelId || "bytedance/seedance-2.0/text-to-video";
 
-    // IMPORTANT: FAL's status/result endpoints require the BASE model_id only
-    // (namespace/model-name), WITHOUT any subpath like /text-to-video or /fast.
-    // The subpath is only used at submission time. Using the full path here
-    // causes the status endpoint to silently fail to find the request, which
-    // looks like it's stuck "processing" forever.
-    //
-    // Examples:
-    //   fal-ai/wan/v2.2-a14b/text-to-video        -> fal-ai/wan/v2.2-a14b
-    //   fal-ai/wan/v2.2-a14b/image-to-video        -> fal-ai/wan/v2.2-a14b
-    //   fal-ai/veo3.1/fast                         -> fal-ai/veo3.1/fast  (this IS the base — no extra subpath)
-    //   fal-ai/veo3.1/fast/image-to-video          -> fal-ai/veo3.1/fast
-    //   bytedance/seedance-2.0/fast/text-to-video  -> bytedance/seedance-2.0/fast
-    //   bytedance/seedance-2.0/text-to-video       -> bytedance/seedance-2.0
-    const KNOWN_SUBPATHS = ["text-to-video", "image-to-video", "reference-to-video", "video-to-video"];
-    const segments = fullModelId.split("/");
-    const lastSegment = segments[segments.length - 1];
-    const modelId = KNOWN_SUBPATHS.includes(lastSegment)
-      ? segments.slice(0, -1).join("/")
-      : fullModelId;
+    let statusUrl = providedStatusUrl;
+    let responseUrl = providedResponseUrl;
 
-    const res = await fetch(`https://queue.fal.run/${modelId}/requests/${actualRequestId}/status`, {
+    // Fallback: if we don't have FAL's own URLs (old-format request_id still in flight),
+    // reconstruct using the full submission path (NOT stripped — that caused a 405 earlier).
+    if (!statusUrl) {
+      statusUrl = `https://queue.fal.run/${modelIdForFallback}/requests/${actualRequestId}/status`;
+    }
+    if (!responseUrl) {
+      responseUrl = `https://queue.fal.run/${modelIdForFallback}/requests/${actualRequestId}`;
+    }
+
+    const res = await fetch(statusUrl, {
       headers: { "Authorization": `Key ${apiKey}` },
     });
 
     if (!res.ok) {
-      // Log the real failure instead of silently returning "processing" forever.
       const errText = await res.text().catch(() => "");
-      console.error(`[CHECK_STATUS] status fetch failed (${res.status}) for modelId=${modelId}: ${errText}`);
+      console.error(`[CHECK_STATUS] status fetch failed (${res.status}) at ${statusUrl}: ${errText}`);
       return NextResponse.json({ status: "processing" });
     }
 
     const data = await res.json();
 
     if (data.status === "COMPLETED") {
-      const resultRes = await fetch(`https://queue.fal.run/${modelId}/requests/${actualRequestId}`, {
+      const resultRes = await fetch(responseUrl, {
         headers: { "Authorization": `Key ${apiKey}` },
       });
       if (!resultRes.ok) {
         const errText = await resultRes.text().catch(() => "");
-        console.error(`[CHECK_STATUS] result fetch failed (${resultRes.status}) for modelId=${modelId}: ${errText}`);
+        console.error(`[CHECK_STATUS] result fetch failed (${resultRes.status}) at ${responseUrl}: ${errText}`);
         return NextResponse.json({ status: "processing" });
       }
       const result = await resultRes.json();
@@ -60,9 +52,10 @@ export async function POST(req) {
       if (videoUrl) {
         return NextResponse.json({ status: "completed", imageUrl: videoUrl });
       }
+      console.error(`[CHECK_STATUS] COMPLETED but no video URL found in result:`, JSON.stringify(result));
       return NextResponse.json({ status: "processing" });
     } else if (data.status === "FAILED" || data.status === "ERROR") {
-      console.error(`[CHECK_STATUS] generation failed for modelId=${modelId}, requestId=${actualRequestId}`, data);
+      console.error(`[CHECK_STATUS] generation failed for requestId=${actualRequestId}`, JSON.stringify(data));
       return NextResponse.json({ status: "failed" });
     }
 
