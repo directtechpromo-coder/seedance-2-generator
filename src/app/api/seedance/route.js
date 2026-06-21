@@ -7,6 +7,7 @@ export async function POST(req) {
     const {
       mode,
       prompt,
+      negative_prompt, // NEW: helps keep style consistent (e.g. prevent cartoon -> realistic drift)
       aspect_ratio,
       resolution,
       duration,
@@ -24,6 +25,7 @@ export async function POST(req) {
     const result = await AIService.generate(fakeUserId, {
       mode,
       prompt,
+      negative_prompt,
       images_list,
       aspect_ratio,
       resolution,
@@ -41,3 +43,4 @@ export async function POST(req) {
     return new NextResponse(error.message || "Internal Error", { status: 500 });
   }
 }
+
