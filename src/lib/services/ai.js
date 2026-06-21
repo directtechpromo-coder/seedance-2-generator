@@ -68,10 +68,16 @@ async function submitClip({ modelKey, modeKey, prompt, images_list, aspect_ratio
   let body;
 
   if (modelKey === "veo") {
+    // Veo 3.1 Fast only accepts discrete duration values: 4s, 6s, or 8s. Snap to nearest valid value.
+    const VALID_VEO_DURATIONS = [4, 6, 8];
+    const snappedDuration = VALID_VEO_DURATIONS.reduce((closest, val) =>
+      Math.abs(val - clipDuration) < Math.abs(closest - clipDuration) ? val : closest
+    );
+
     body = {
       prompt,
       aspect_ratio,
-      duration: `${clipDuration}s`, // Veo expects a string like "8s"
+      duration: `${snappedDuration}s`, // Veo expects a string like "8s", and ONLY 4s/6s/8s are valid
       resolution: resolution === "1080p" ? "1080p" : "720p",
       generate_audio: true,
     };
@@ -204,8 +210,17 @@ async function generate(userId, options = {}) {
   }
 
   // Case 2: duration exceeds this model's per-clip cap -> auto-split into two submissions.
-  const durationA = maxPerClip;
-  const durationB = totalDuration - maxPerClip;
+  let durationA = maxPerClip;
+  let durationB = totalDuration - maxPerClip;
+
+  if (modelKey === "veo") {
+    // Veo only accepts 4s/6s/8s per clip. Snap the second clip's duration to the
+    // nearest valid value (rather than an arbitrary remainder like 7s, which FAL rejects/hangs on).
+    const VALID_VEO_DURATIONS = [4, 6, 8];
+    durationB = VALID_VEO_DURATIONS.reduce((closest, val) =>
+      Math.abs(val - durationB) < Math.abs(closest - durationB) ? val : closest
+    );
+  }
 
   const clipA = await submitClip({
     modelKey,
