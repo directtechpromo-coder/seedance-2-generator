@@ -81,6 +81,13 @@ export default function Home() {
   const [stitchProgress, setStitchProgress] = useState(""); // NEW: client-side stitch progress text
   const ffmpegRef = useRef(null); // NEW: holds the loaded FFmpeg.wasm instance (loaded once, reused)
 
+  // NEW: Multi-Scene Mode (for long videos built from multiple [SCENE N] blocks)
+  const [multiSceneMode, setMultiSceneMode] = useState(false);
+  const [scriptText, setScriptText] = useState("");
+  const [sceneResults, setSceneResults] = useState([]); // [{index, status: 'pending'|'generating'|'done'|'failed', url, error}]
+  const [multiSceneRunning, setMultiSceneRunning] = useState(false);
+  const [multiSceneCancelRef] = useState({ current: false }); // mutable flag to allow stopping the loop
+
   const MODES = [
     { id: "text-to-video", label: "Text", fullLabel: "Text to Video", icon: FaBolt },
     { id: "image-to-video", label: "Image", fullLabel: "Image to Video", icon: IoImageOutline },
@@ -309,6 +316,93 @@ export default function Home() {
     return DURATIONS;
   };
 
+  // NEW: Parses a script with [SCENE 1] ... [SCENE 2] ... markers into an array of scene prompts.
+  // Falls back to treating non-empty lines as scenes if no [SCENE] markers are found.
+  const parseScenes = (text) => {
+    const sceneMarkerRegex = /\[SCENE\s*\d+\]/gi;
+    if (sceneMarkerRegex.test(text)) {
+      return text
+        .split(/\[SCENE\s*\d+\]/gi)
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0);
+    }
+    // Fallback: split on blank lines (paragraph breaks) if no [SCENE] tags were used.
+    return text
+      .split(/\n\s*\n/)
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0);
+  };
+
+  // NEW: Sequentially submits each scene to Veo (8s, audio on), polls each to completion
+  // before moving to the next, and updates sceneResults for live progress display.
+  const handleMultiSceneGenerate = async () => {
+    const scenes = parseScenes(scriptText);
+    if (scenes.length === 0) {
+      setError("No scenes found. Use [SCENE 1], [SCENE 2]... markers or separate scenes with a blank line.");
+      return;
+    }
+
+    setMultiSceneRunning(true);
+    setError(null);
+    multiSceneCancelRef.current = false;
+    setSceneResults(scenes.map((text, i) => ({ index: i, text, status: "pending", url: null, error: null })));
+
+    const collectedUrls = [];
+
+    for (let i = 0; i < scenes.length; i++) {
+      if (multiSceneCancelRef.current) break;
+
+      setSceneResults((prev) => {
+        const next = [...prev];
+        next[i] = { ...next[i], status: "generating" };
+        return next;
+      });
+
+      try {
+        const res = await fetch("/api/seedance", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            mode: "text-to-video",
+            prompt: scenes[i],
+            aspect_ratio: aspectRatio,
+            resolution,
+            duration: 8, // fixed: each scene is a single Veo clip, capped at 8s
+            generate_audio: true,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.error || "Scene generation failed to start.");
+
+        // Single-clip path only (duration=8 never triggers the auto-split case).
+        const url = await pollSingleClipSilently(data.request_id, data.metadata);
+
+        collectedUrls.push(url);
+        setSceneResults((prev) => {
+          const next = [...prev];
+          next[i] = { ...next[i], status: "done", url };
+          return next;
+        });
+      } catch (err) {
+        setSceneResults((prev) => {
+          const next = [...prev];
+          next[i] = { ...next[i], status: "failed", error: err.message };
+          return next;
+        });
+        // Continue to next scene rather than aborting the whole run — a single failed
+        // scene shouldn't block the rest; the person can retry just that scene later.
+      }
+    }
+
+    // Queue all successfully generated clips for stitching, in order.
+    setStitchList((prev) => [...prev, ...collectedUrls]);
+    setMultiSceneRunning(false);
+  };
+
+  const handleStopMultiScene = () => {
+    multiSceneCancelRef.current = true;
+  };
+
   useEffect(() => {
     const available = getAvailableDurations();
     if (!available.find((d) => d.value === duration)) setDuration(available[0].value);
@@ -361,6 +455,71 @@ export default function Home() {
             })}
           </div>
 
+          {/* NEW: Multi-Scene Mode toggle (for building long videos from multiple scenes) */}
+          <button
+            onClick={() => setMultiSceneMode(!multiSceneMode)}
+            className={`w-full flex items-center justify-between px-3 py-2.5 rounded-md border text-xs font-medium transition-colors ${
+              multiSceneMode
+                ? "bg-primary-500/10 border-primary-500/30 text-primary-500"
+                : "bg-glass-bg border-glass-border text-muted hover:text-foreground"
+            }`}
+          >
+            <span className="flex items-center gap-2">
+              <FaFilm className="text-[10px]" />
+              Multi-Scene Mode (long videos, e.g. 5 min)
+            </span>
+            <span className="text-[10px] opacity-70">{multiSceneMode ? "ON" : "OFF"}</span>
+          </button>
+
+          {multiSceneMode ? (
+            <div className="space-y-4">
+              <div className="space-y-1.5">
+                <label className="text-[10px] font-medium text-muted uppercase tracking-wider">
+                  Script (use [SCENE 1], [SCENE 2]... to separate scenes — each becomes one 8s clip)
+                </label>
+                <textarea
+                  value={scriptText}
+                  onChange={(e) => setScriptText(e.target.value)}
+                  placeholder={"[SCENE 1]\nTwo men sitting at a chai stall discussing inflation...\n\n[SCENE 2]\nClose-up of one man's frustrated face as he gestures...\n\n[SCENE 3]\nWide shot of busy street with motorcycles passing by..."}
+                  className="w-full h-56 bg-glass-bg border border-glass-border rounded-md p-2 text-sm outline-none focus:border-primary-500/40 resize-none transition-colors custom-scrollbar"
+                />
+                <p className="text-[10px] text-muted">
+                  {parseScenes(scriptText).length} scene(s) detected · ~{parseScenes(scriptText).length * 8}s total ·
+                  est. ${(parseScenes(scriptText).length * 1.2).toFixed(2)}
+                </p>
+              </div>
+
+              {sceneResults.length > 0 && (
+                <div className="space-y-1 max-h-56 overflow-y-auto custom-scrollbar">
+                  {sceneResults.map((s) => (
+                    <div key={s.index} className="flex items-center justify-between px-2 py-1.5 bg-glass-hover rounded text-[10px] border border-glass-border">
+                      <span className="text-muted truncate flex-1 mr-2">Scene {s.index + 1}: {s.text.slice(0, 40)}...</span>
+                      <span className={`shrink-0 font-medium ${
+                        s.status === "done" ? "text-green-400" :
+                        s.status === "failed" ? "text-red-400" :
+                        s.status === "generating" ? "text-primary-500" : "text-muted"
+                      }`}>
+                        {s.status === "generating" && <span className="inline-block w-2 h-2 rounded-full bg-primary-500 animate-pulse mr-1" />}
+                        {s.status}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <button
+                onClick={multiSceneRunning ? handleStopMultiScene : handleMultiSceneGenerate}
+                disabled={!multiSceneRunning && parseScenes(scriptText).length === 0}
+                className={`w-full rounded-md py-2 text-sm font-medium transition-all active:scale-[0.98] disabled:opacity-60 ${
+                  multiSceneRunning ? "bg-red-500 hover:bg-red-600 text-white" : "bg-primary-500 hover:bg-primary-600 text-white"
+                }`}
+              >
+                {multiSceneRunning
+                  ? `Stop (Scene ${sceneResults.filter((s) => s.status === "done" || s.status === "failed").length}/${sceneResults.length} done)`
+                  : `Generate All Scenes (${parseScenes(scriptText).length})`}
+              </button>
+            </div>
+          ) : (
           <div className="space-y-4">
             <div className="space-y-1.5">
               <label className="text-[10px] font-medium text-muted uppercase tracking-wider">Prompt</label>
@@ -434,6 +593,7 @@ export default function Home() {
               </button>
             </div>
           </div>
+          )}
 
           {stitchList.length >= 2 && (
             <button onClick={handleStitchAndDownload} disabled={stitching}
