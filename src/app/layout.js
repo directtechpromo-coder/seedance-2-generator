@@ -1,7 +1,5 @@
 import { Inter } from 'next/font/google'
 import './globals.css'
-import { getServerSession } from 'next-auth'
-import { authOptions } from './api/auth/[...nextauth]/route'
 import SessionProvider from '@/components/SessionProvider'
 
 const inter = Inter({ subsets: ['latin'] })
@@ -12,11 +10,10 @@ export const metadata = {
 }
 
 export default async function RootLayout({ children }) {
-  const session = await getServerSession(authOptions)
   return (
     <html lang="en">
       <body className={inter.className} style={{ background: '#0f0a2e', margin: 0 }}>
-        <SessionProvider session={session}>
+        <SessionProvider session={null}>
           <nav style={{
             height: '60px',
             background: 'rgba(15,10,46,0.97)',
@@ -62,9 +59,7 @@ export default async function RootLayout({ children }) {
                 color: '#c8c0ff',
                 borderRadius: '8px',
                 textDecoration: 'none',
-              }}>
-                Generation
-              </a>
+              }}>Generation</a>
               <a href="/gallery" style={{
                 padding: '7px 14px',
                 fontSize: '13px',
@@ -72,9 +67,7 @@ export default async function RootLayout({ children }) {
                 color: '#c8c0ff',
                 borderRadius: '8px',
                 textDecoration: 'none',
-              }}>
-                Gallery
-              </a>
+              }}>Gallery</a>
               <a href="#pricing" style={{
                 padding: '7px 14px',
                 fontSize: '13px',
@@ -82,65 +75,30 @@ export default async function RootLayout({ children }) {
                 color: '#c8c0ff',
                 borderRadius: '8px',
                 textDecoration: 'none',
-              }}>
-                Pricing
-              </a>
+              }}>Pricing</a>
             </div>
 
             <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-              {session ? (
-                <>
-                  <span style={{
-                    fontSize: '12px',
-                    color: '#c4b5fd',
-                    fontWeight: 700,
-                    background: 'rgba(139,92,246,0.15)',
-                    border: '1px solid rgba(139,92,246,0.3)',
-                    padding: '5px 10px',
-                    borderRadius: '20px',
-                  }}>
-                    {session.user?.credits ?? 0} credits
-                  </span>
-                  <a href="/api/auth/signout" style={{
-                    padding: '8px 16px',
-                    fontSize: '13px',
-                    fontWeight: 600,
-                    color: '#c8c0ff',
-                    borderRadius: '9px',
-                    border: '1px solid rgba(139,92,246,0.3)',
-                    textDecoration: 'none',
-                  }}>
-                    Sign out
-                  </a>
-                </>
-              ) : (
-                <>
-                  <a href="/api/auth/signin" style={{
-                    padding: '8px 16px',
-                    fontSize: '13px',
-                    fontWeight: 600,
-                    color: '#c8c0ff',
-                    borderRadius: '9px',
-                    border: '1px solid rgba(139,92,246,0.3)',
-                    background: 'transparent',
-                    textDecoration: 'none',
-                  }}>
-                    Log in
-                  </a>
-                  <a href="/api/auth/signin" style={{
-                    padding: '8px 20px',
-                    fontSize: '13px',
-                    fontWeight: 800,
-                    color: '#fff',
-                    borderRadius: '9px',
-                    textDecoration: 'none',
-                    background: '#8b5cf6',
-                    boxShadow: '0 0 20px rgba(139,92,246,0.4)',
-                  }}>
-                    Start free
-                  </a>
-                </>
-              )}
+              <a href="/api/auth/signin" style={{
+                padding: '8px 16px',
+                fontSize: '13px',
+                fontWeight: 600,
+                color: '#c8c0ff',
+                borderRadius: '9px',
+                border: '1px solid rgba(139,92,246,0.3)',
+                background: 'transparent',
+                textDecoration: 'none',
+              }}>Log in</a>
+              <a href="/api/auth/signin" style={{
+                padding: '8px 20px',
+                fontSize: '13px',
+                fontWeight: 800,
+                color: '#fff',
+                borderRadius: '9px',
+                textDecoration: 'none',
+                background: '#8b5cf6',
+                boxShadow: '0 0 20px rgba(139,92,246,0.4)',
+              }}>Start free</a>
             </div>
           </nav>
           {children}
