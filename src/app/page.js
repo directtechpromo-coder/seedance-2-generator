@@ -1,216 +1,233 @@
 'use client'
+import { useState } from 'react'
 
 export default function Home() {
+  const [prompt, setPrompt] = useState('')
+  const [mode, setMode] = useState('text')
+  const [resolution, setResolution] = useState('720p')
+  const [duration, setDuration] = useState('5s')
+  const [ratio, setRatio] = useState('16:9')
+  const [voice, setVoice] = useState('none')
+
   return (
-    <main style={{ background: '#0f0a2e', minHeight: '100vh' }}>
+    <main style={{ background: '#0f0a2e', minHeight: '100vh', padding: '24px 20px' }}>
 
-      {/* HERO */}
-      <section style={{ textAlign: 'center', padding: '72px 24px 52px', maxWidth: '860px', margin: '0 auto', position: 'relative' }}>
-        <div style={{ position: 'absolute', top: 0, left: '50%', transform: 'translateX(-50%)', width: '700px', height: '500px', background: 'radial-gradient(ellipse,rgba(139,92,246,0.2) 0%,transparent 65%)', pointerEvents: 'none' }} />
-
-        <div style={{ display: 'inline-flex', alignItems: 'center', gap: '7px', background: 'rgba(139,92,246,0.15)', border: '1px solid rgba(139,92,246,0.4)', borderRadius: '20px', padding: '6px 16px 6px 10px', fontSize: '12px', fontWeight: 700, color: '#c4b5fd', marginBottom: '24px', position: 'relative' }}>
-          <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: '#8b5cf6' }} />
-          Now with native voice generation
-        </div>
-
-        <h1 style={{ fontSize: '54px', fontWeight: 900, letterSpacing: '-2px', lineHeight: 1.05, marginBottom: '18px', color: '#fff', position: 'relative' }}>
-          Create cinematic
-          <br />
-          videos with AI
+      {/* PAGE TITLE */}
+      <div style={{ textAlign: 'center', marginBottom: '24px' }}>
+        <h1 style={{ fontSize: '28px', fontWeight: 900, color: '#fff', letterSpacing: '-1px', marginBottom: '6px' }}>
+          Vidro <span style={{ background: 'linear-gradient(135deg,#a78bfa,#f472b6)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>AI Studio</span>
         </h1>
-
-        <p style={{ fontSize: '17px', color: '#c8c0ff', lineHeight: 1.7, maxWidth: '540px', margin: '0 auto 32px', position: 'relative' }}>
-          Vidro replaces Seedance, ElevenLabs, and CapCut — one tool that generates, narrates, and stitches your videos. For a fraction of the cost.
+        <p style={{ fontSize: '14px', color: '#9080cc' }}>
+          Generate cinematic videos with voice — no editing skills required
         </p>
+      </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '12px', marginBottom: '16px', position: 'relative' }}>
-          <a href="/api/auth/signin" style={{ padding: '15px 30px', fontSize: '15px', fontWeight: 800, color: '#fff', borderRadius: '12px', background: '#8b5cf6', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '8px' }}>
-            Start creating free
-          </a>
-          <a href="#how" style={{ padding: '15px 26px', fontSize: '15px', fontWeight: 700, color: '#c8c0ff', borderRadius: '12px', border: '1px solid rgba(139,92,246,0.4)', background: 'rgba(139,92,246,0.1)', textDecoration: 'none' }}>
-            Watch demo
-          </a>
-        </div>
+      {/* MAIN GRID */}
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 420px', gap: '18px', maxWidth: '1100px', margin: '0 auto', alignItems: 'start' }}>
 
-        <p style={{ fontSize: '12px', color: '#9080cc', position: 'relative' }}>
-          10 free credits — no credit card required
-        </p>
-      </section>
+        {/* LEFT — GENERATOR */}
+        <div style={{ background: 'rgba(26,18,69,0.8)', border: '1px solid rgba(139,92,246,0.25)', borderRadius: '16px', overflow: 'hidden', position: 'relative' }}>
+          <div style={{ height: '2px', background: 'linear-gradient(90deg,transparent,#8b5cf6,#f472b6,transparent)' }} />
 
-      {/* PROBLEM */}
-      <section style={{ padding: '64px 32px', maxWidth: '860px', margin: '0 auto', textAlign: 'center' }}>
-        <div style={{ display: 'inline-flex', background: 'rgba(248,113,113,0.1)', border: '1px solid rgba(248,113,113,0.35)', borderRadius: '14px', padding: '5px 14px', fontSize: '11px', fontWeight: 700, color: '#fca5a5', textTransform: 'uppercase', letterSpacing: '.8px', marginBottom: '16px' }}>
-          The problem
-        </div>
-        <h2 style={{ fontSize: '34px', fontWeight: 900, letterSpacing: '-1px', color: '#fff', marginBottom: '12px' }}>
-          Too many tools. Too much cost.
-        </h2>
-        <p style={{ fontSize: '15px', color: '#c8c0ff', lineHeight: 1.7, maxWidth: '520px', margin: '0 auto 32px' }}>
-          You need 3 separate subscriptions just to make one AI video. Costs add up every single month.
-        </p>
-
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: '12px', maxWidth: '660px', margin: '0 auto' }}>
-          <div style={{ background: 'rgba(248,113,113,0.1)', border: '1px solid rgba(248,113,113,0.3)', borderRadius: '14px', padding: '22px' }}>
-            <div style={{ fontSize: '11px', fontWeight: 700, color: '#fca5a5', textTransform: 'uppercase', marginBottom: '8px' }}>Seedance / Veo</div>
-            <div style={{ fontSize: '32px', fontWeight: 900, color: '#f87171', marginBottom: '4px' }}>$44+</div>
-            <div style={{ fontSize: '11px', color: '#c8c0ff' }}>Video generation</div>
+          {/* MODE TABS */}
+          <div style={{ display: 'flex', gap: '4px', padding: '14px 14px 0' }}>
+            {[
+              { id: 'text', label: 'Text to Video' },
+              { id: 'image', label: 'Image to Video' },
+              { id: 'multi', label: 'Multi-Scene' },
+            ].map((tab) => (
+              <button key={tab.id} onClick={() => setMode(tab.id)} style={{
+                padding: '7px 14px', fontSize: '12px', fontWeight: 600, borderRadius: '8px', border: 'none', cursor: 'pointer', fontFamily: 'inherit',
+                background: mode === tab.id ? 'rgba(139,92,246,0.2)' : 'transparent',
+                color: mode === tab.id ? '#c4b5fd' : '#9080cc',
+                outline: mode === tab.id ? '1px solid rgba(139,92,246,0.4)' : 'none',
+              }}>{tab.label}</button>
+            ))}
           </div>
-          <div style={{ background: 'rgba(248,113,113,0.1)', border: '1px solid rgba(248,113,113,0.3)', borderRadius: '14px', padding: '22px' }}>
-            <div style={{ fontSize: '11px', fontWeight: 700, color: '#fca5a5', textTransform: 'uppercase', marginBottom: '8px' }}>ElevenLabs</div>
-            <div style={{ fontSize: '32px', fontWeight: 900, color: '#f87171', marginBottom: '4px' }}>$22</div>
-            <div style={{ fontSize: '11px', color: '#c8c0ff' }}>Voice narration</div>
-          </div>
-          <div style={{ background: 'rgba(248,113,113,0.1)', border: '1px solid rgba(248,113,113,0.3)', borderRadius: '14px', padding: '22px' }}>
-            <div style={{ fontSize: '11px', fontWeight: 700, color: '#fca5a5', textTransform: 'uppercase', marginBottom: '8px' }}>CapCut Pro</div>
-            <div style={{ fontSize: '32px', fontWeight: 900, color: '#f87171', marginBottom: '4px' }}>$10</div>
-            <div style={{ fontSize: '11px', color: '#c8c0ff' }}>Video stitching</div>
-          </div>
-        </div>
 
-        <div style={{ marginTop: '20px', background: 'rgba(248,113,113,0.08)', border: '1px solid rgba(248,113,113,0.3)', borderRadius: '12px', padding: '18px 28px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', maxWidth: '660px', margin: '20px auto 0' }}>
-          <span style={{ fontSize: '14px', fontWeight: 700, color: '#c8c0ff' }}>You are paying every month</span>
-          <span style={{ fontSize: '18px', color: '#9080cc' }}>to</span>
-          <span style={{ fontSize: '28px', fontWeight: 900, color: '#f87171' }}>$76+/mo</span>
-        </div>
-      </section>
-
-      {/* SOLUTION */}
-      <section style={{ padding: '16px 32px 64px', maxWidth: '860px', margin: '0 auto', textAlign: 'center' }}>
-        <div style={{ display: 'inline-flex', background: 'rgba(52,211,153,0.1)', border: '1px solid rgba(52,211,153,0.35)', borderRadius: '14px', padding: '5px 14px', fontSize: '11px', fontWeight: 700, color: '#6ee7b7', textTransform: 'uppercase', letterSpacing: '.8px', marginBottom: '16px' }}>
-          The solution
-        </div>
-        <h2 style={{ fontSize: '34px', fontWeight: 900, letterSpacing: '-1px', color: '#fff', marginBottom: '12px' }}>
-          One tool. Everything included.
-        </h2>
-        <p style={{ fontSize: '15px', color: '#c8c0ff', lineHeight: 1.7, maxWidth: '500px', margin: '0 auto 32px' }}>
-          Vidro replaces all three. Generate videos, add voice narration, and stitch scenes in one place.
-        </p>
-        <div style={{ background: 'linear-gradient(135deg,rgba(52,211,153,0.1),rgba(139,92,246,0.08))', border: '1px solid rgba(52,211,153,0.3)', borderRadius: '16px', padding: '26px 36px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', maxWidth: '560px', margin: '0 auto' }}>
-          <div style={{ textAlign: 'left' }}>
-            <div style={{ fontSize: '11px', fontWeight: 700, color: '#6ee7b7', textTransform: 'uppercase', letterSpacing: '.8px', marginBottom: '6px' }}>Vidro Basic</div>
-            <div style={{ fontSize: '40px', fontWeight: 900, color: '#34d399', lineHeight: 1 }}>$19/mo</div>
-            <div style={{ fontSize: '13px', color: '#9080cc', marginTop: '4px' }}>Video + Voice + Stitching included</div>
-          </div>
-          <div style={{ textAlign: 'right' }}>
-            <div style={{ fontSize: '13px', color: '#c8c0ff', marginBottom: '8px' }}>Save $57/month vs 3 tools</div>
-            <div style={{ background: 'rgba(52,211,153,0.12)', border: '1px solid rgba(52,211,153,0.35)', borderRadius: '8px', padding: '5px 14px', fontSize: '13px', fontWeight: 800, color: '#34d399', display: 'inline-block' }}>75% cheaper</div>
-          </div>
-        </div>
-      </section>
-
-      {/* HOW IT WORKS */}
-      <section id="how" style={{ padding: '64px 32px', maxWidth: '820px', margin: '0 auto', textAlign: 'center', borderTop: '1px solid rgba(139,92,246,0.15)' }}>
-        <div style={{ display: 'inline-flex', background: 'rgba(139,92,246,0.12)', border: '1px solid rgba(139,92,246,0.35)', borderRadius: '14px', padding: '5px 14px', fontSize: '11px', fontWeight: 700, color: '#c4b5fd', textTransform: 'uppercase', letterSpacing: '.8px', marginBottom: '14px' }}>
-          How it works
-        </div>
-        <h2 style={{ fontSize: '34px', fontWeight: 900, letterSpacing: '-1px', color: '#fff', marginBottom: '10px' }}>3 steps to your video</h2>
-        <p style={{ fontSize: '14px', color: '#c8c0ff', marginBottom: '44px' }}>No learning curve. No timeline editing. Just describe and generate.</p>
-
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: '16px' }}>
-          <div style={{ padding: '0 16px' }}>
-            <div style={{ width: '56px', height: '56px', borderRadius: '50%', background: '#8b5cf6', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px', fontWeight: 900, color: '#fff', margin: '0 auto 16px' }}>1</div>
-            <div style={{ fontSize: '15px', fontWeight: 800, color: '#fff', marginBottom: '8px' }}>Write your prompt</div>
-            <div style={{ fontSize: '13px', color: '#c8c0ff', lineHeight: 1.6 }}>Describe your video in plain text. Pick voice, quality, and duration.</div>
-          </div>
-          <div style={{ padding: '0 16px' }}>
-            <div style={{ width: '56px', height: '56px', borderRadius: '50%', background: '#8b5cf6', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px', fontWeight: 900, color: '#fff', margin: '0 auto 16px' }}>2</div>
-            <div style={{ fontSize: '15px', fontWeight: 800, color: '#fff', marginBottom: '8px' }}>Vidro generates</div>
-            <div style={{ fontSize: '13px', color: '#c8c0ff', lineHeight: 1.6 }}>AI creates your video with narration and stitches all scenes automatically.</div>
-          </div>
-          <div style={{ padding: '0 16px' }}>
-            <div style={{ width: '56px', height: '56px', borderRadius: '50%', background: '#8b5cf6', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px', fontWeight: 900, color: '#fff', margin: '0 auto 16px' }}>3</div>
-            <div style={{ fontSize: '15px', fontWeight: 800, color: '#fff', marginBottom: '8px' }}>Download and publish</div>
-            <div style={{ fontSize: '13px', color: '#c8c0ff', lineHeight: 1.6 }}>Your finished video is ready in minutes. Download and post anywhere.</div>
-          </div>
-        </div>
-      </section>
-
-      {/* PRICING */}
-      <section id="pricing" style={{ padding: '64px 32px', borderTop: '1px solid rgba(139,92,246,0.18)' }}>
-        <div style={{ maxWidth: '820px', margin: '0 auto', textAlign: 'center' }}>
-          <div style={{ display: 'inline-flex', background: 'rgba(139,92,246,0.12)', border: '1px solid rgba(139,92,246,0.35)', borderRadius: '14px', padding: '5px 14px', fontSize: '11px', fontWeight: 700, color: '#c4b5fd', textTransform: 'uppercase', letterSpacing: '.8px', marginBottom: '14px' }}>
-            Pricing
-          </div>
-          <h2 style={{ fontSize: '34px', fontWeight: 900, letterSpacing: '-1px', color: '#fff', marginBottom: '10px' }}>Start free, scale as you grow</h2>
-          <p style={{ fontSize: '14px', color: '#c8c0ff', marginBottom: '32px' }}>No contracts. Cancel anytime. Credits never expire.</p>
-
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: '11px' }}>
-            <div style={{ background: 'rgba(26,18,69,0.9)', border: '1px solid rgba(139,92,246,0.18)', borderRadius: '14px', padding: '20px' }}>
-              <div style={{ fontSize: '11px', fontWeight: 700, color: '#9080cc', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '8px' }}>Free</div>
-              <div style={{ fontSize: '30px', fontWeight: 900, color: '#fff', marginBottom: '2px' }}>$0</div>
-              <div style={{ fontSize: '11px', color: '#9080cc', marginBottom: '10px' }}>/month</div>
-              <div style={{ fontSize: '12px', color: '#c4b5fd', fontWeight: 700, marginBottom: '16px' }}>3 videos/month</div>
-              <a href="/api/auth/signin" style={{ display: 'block', padding: '9px 0', borderRadius: '9px', fontSize: '12px', fontWeight: 700, textAlign: 'center', textDecoration: 'none', background: 'rgba(139,92,246,0.12)', color: '#c4b5fd', border: '1px solid rgba(139,92,246,0.3)' }}>Get started</a>
-            </div>
-            <div style={{ background: 'rgba(26,18,69,0.9)', border: '1px solid rgba(139,92,246,0.18)', borderRadius: '14px', padding: '20px' }}>
-              <div style={{ fontSize: '11px', fontWeight: 700, color: '#9080cc', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '8px' }}>Basic</div>
-              <div style={{ fontSize: '30px', fontWeight: 900, color: '#fff', marginBottom: '2px' }}>$19</div>
-              <div style={{ fontSize: '11px', color: '#9080cc', marginBottom: '10px' }}>/month</div>
-              <div style={{ fontSize: '12px', color: '#c4b5fd', fontWeight: 700, marginBottom: '16px' }}>20 videos/month</div>
-              <a href="/api/auth/signin" style={{ display: 'block', padding: '9px 0', borderRadius: '9px', fontSize: '12px', fontWeight: 700, textAlign: 'center', textDecoration: 'none', background: 'rgba(139,92,246,0.12)', color: '#c4b5fd', border: '1px solid rgba(139,92,246,0.3)' }}>Start Basic</a>
-            </div>
-            <div style={{ background: 'linear-gradient(145deg,rgba(139,92,246,0.18),rgba(15,10,46,0.8))', border: '2px solid rgba(139,92,246,0.6)', borderRadius: '14px', padding: '20px', position: 'relative' }}>
-              <div style={{ position: 'absolute', top: '-11px', left: '50%', transform: 'translateX(-50%)', background: '#8b5cf6', color: '#fff', fontSize: '9px', fontWeight: 800, padding: '3px 11px', borderRadius: '8px', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>Most popular</div>
-              <div style={{ fontSize: '11px', fontWeight: 700, color: '#9080cc', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '8px' }}>Pro</div>
-              <div style={{ fontSize: '30px', fontWeight: 900, color: '#fff', marginBottom: '2px' }}>$49</div>
-              <div style={{ fontSize: '11px', color: '#9080cc', marginBottom: '10px' }}>/month</div>
-              <div style={{ fontSize: '12px', color: '#c4b5fd', fontWeight: 700, marginBottom: '16px' }}>37 videos/month</div>
-              <a href="/api/auth/signin" style={{ display: 'block', padding: '9px 0', borderRadius: '9px', fontSize: '12px', fontWeight: 700, textAlign: 'center', textDecoration: 'none', background: '#8b5cf6', color: '#fff' }}>Start Pro</a>
-            </div>
-            <div style={{ background: 'rgba(26,18,69,0.9)', border: '1px solid rgba(139,92,246,0.18)', borderRadius: '14px', padding: '20px' }}>
-              <div style={{ fontSize: '11px', fontWeight: 700, color: '#9080cc', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '8px' }}>Agency</div>
-              <div style={{ fontSize: '30px', fontWeight: 900, color: '#fff', marginBottom: '2px' }}>$149</div>
-              <div style={{ fontSize: '11px', color: '#9080cc', marginBottom: '10px' }}>/month</div>
-              <div style={{ fontSize: '12px', color: '#c4b5fd', fontWeight: 700, marginBottom: '16px' }}>150 videos/month</div>
-              <a href="/api/auth/signin" style={{ display: 'block', padding: '9px 0', borderRadius: '9px', fontSize: '12px', fontWeight: 700, textAlign: 'center', textDecoration: 'none', background: 'rgba(139,92,246,0.12)', color: '#c4b5fd', border: '1px solid rgba(139,92,246,0.3)' }}>Contact us</a>
+          {/* PROMPT */}
+          <div style={{ padding: '12px 14px 0' }}>
+            <div style={{ fontSize: '10px', fontWeight: 700, color: '#9080cc', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '6px' }}>Prompt</div>
+            <div style={{ background: 'rgba(15,10,46,0.8)', border: '1px solid rgba(139,92,246,0.2)', borderRadius: '10px', transition: 'border-color .2s' }}>
+              <textarea
+                value={prompt}
+                onChange={(e) => setPrompt(e.target.value)}
+                placeholder="Describe your video... e.g. A cinematic drone shot over a neon-lit city at night, rain falling on wet streets, slow pan with bokeh lights..."
+                style={{ width: '100%', background: 'transparent', border: 'none', outline: 'none', color: '#fff', fontSize: '13px', lineHeight: 1.65, resize: 'none', padding: '11px 12px', minHeight: '90px', fontFamily: 'inherit' }}
+              />
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', borderTop: '1px solid rgba(139,92,246,0.15)' }}>
+                <button style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '11px', color: '#c4b5fd', background: 'rgba(139,92,246,0.12)', border: '1px solid rgba(139,92,246,0.25)', borderRadius: '6px', padding: '4px 9px', cursor: 'pointer', fontFamily: 'inherit' }}>
+                  ✨ Enhance prompt
+                </button>
+                <span style={{ fontSize: '11px', color: '#9080cc' }}>{prompt.length} / 500</span>
+              </div>
             </div>
           </div>
-        </div>
-      </section>
 
-      {/* FINAL CTA */}
-      <section style={{ padding: '80px 32px', textAlign: 'center' }}>
-        <h2 style={{ fontSize: '42px', fontWeight: 900, letterSpacing: '-1.5px', color: '#fff', marginBottom: '14px', lineHeight: 1.1 }}>
-          Start creating videos in minutes
-        </h2>
-        <p style={{ fontSize: '16px', color: '#c8c0ff', maxWidth: '440px', margin: '0 auto 32px', lineHeight: 1.65 }}>
-          Join thousands of creators already using Vidro. 10 free credits, no card required.
-        </p>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '12px', marginBottom: '14px' }}>
-          <a href="/api/auth/signin" style={{ padding: '15px 30px', fontSize: '15px', fontWeight: 800, color: '#fff', borderRadius: '12px', background: '#8b5cf6', textDecoration: 'none' }}>
-            Get started free
-          </a>
-          <a href="#pricing" style={{ padding: '15px 26px', fontSize: '15px', fontWeight: 700, color: '#c8c0ff', borderRadius: '12px', border: '1px solid rgba(139,92,246,0.4)', background: 'rgba(139,92,246,0.1)', textDecoration: 'none' }}>
-            See pricing
-          </a>
-        </div>
-        <p style={{ fontSize: '12px', color: '#9080cc' }}>
-          Free forever plan available. No credit card. Cancel anytime.
-        </p>
-      </section>
-
-      {/* FOOTER */}
-      <footer style={{ padding: '28px 32px', borderTop: '1px solid rgba(139,92,246,0.18)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <div style={{ width: '26px', height: '26px', borderRadius: '7px', background: '#8b5cf6', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none">
-              <path d="M6 5L18 12L6 19V5Z" fill="white"/>
-            </svg>
+          {/* NEGATIVE PROMPT */}
+          <div style={{ padding: '8px 14px 0' }}>
+            <div style={{ background: 'rgba(239,68,68,0.05)', border: '1px solid rgba(239,68,68,0.15)', borderRadius: '8px', padding: '8px 11px', display: 'flex', alignItems: 'center', gap: '7px' }}>
+              <span style={{ fontSize: '13px', color: 'rgba(239,68,68,0.6)' }}>⊘</span>
+              <input placeholder="Negative prompt: blurry, distorted, watermark..." style={{ background: 'transparent', border: 'none', outline: 'none', color: '#9080cc', fontSize: '12px', flex: 1, fontFamily: 'inherit' }} />
+            </div>
           </div>
-          <span style={{ fontSize: '15px', fontWeight: 900, color: '#fff' }}>
-            Vid<span style={{ color: '#a78bfa' }}>ro</span>
-          </span>
-        </div>
-        <div style={{ display: 'flex', gap: '20px' }}>
-          <a href="#" style={{ fontSize: '12px', color: '#9080cc', textDecoration: 'none' }}>Features</a>
-          <a href="#" style={{ fontSize: '12px', color: '#9080cc', textDecoration: 'none' }}>Pricing</a>
-          <a href="#" style={{ fontSize: '12px', color: '#9080cc', textDecoration: 'none' }}>Privacy</a>
-          <a href="#" style={{ fontSize: '12px', color: '#9080cc', textDecoration: 'none' }}>Terms</a>
-          <a href="#" style={{ fontSize: '12px', color: '#9080cc', textDecoration: 'none' }}>Contact</a>
-        </div>
-        <span style={{ fontSize: '12px', color: '#9080cc' }}>2026 Vidro. All rights reserved.</span>
-      </footer>
 
+          {/* SETTINGS */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '9px', padding: '10px 14px 0' }}>
+            {/* Resolution */}
+            <div style={{ background: 'rgba(15,10,46,0.6)', border: '1px solid rgba(139,92,246,0.15)', borderRadius: '9px', padding: '9px 11px' }}>
+              <div style={{ fontSize: '10px', fontWeight: 700, color: '#9080cc', textTransform: 'uppercase', letterSpacing: '.7px', marginBottom: '6px' }}>Resolution</div>
+              <div style={{ display: 'flex', gap: '3px' }}>
+                {['480p', '720p', '1080p'].map((r) => (
+                  <button key={r} onClick={() => setResolution(r)} style={{
+                    flex: 1, padding: '5px 3px', borderRadius: '6px', fontSize: '11px', fontWeight: 600, textAlign: 'center', cursor: 'pointer', border: 'none', fontFamily: 'inherit',
+                    background: resolution === r ? 'rgba(139,92,246,0.2)' : 'transparent',
+                    color: resolution === r ? '#c4b5fd' : '#9080cc',
+                    outline: resolution === r ? '1px solid rgba(139,92,246,0.35)' : '1px solid transparent',
+                  }}>{r}</button>
+                ))}
+              </div>
+            </div>
+
+            {/* Duration */}
+            <div style={{ background: 'rgba(15,10,46,0.6)', border: '1px solid rgba(139,92,246,0.15)', borderRadius: '9px', padding: '9px 11px' }}>
+              <div style={{ fontSize: '10px', fontWeight: 700, color: '#9080cc', textTransform: 'uppercase', letterSpacing: '.7px', marginBottom: '6px' }}>Duration</div>
+              <div style={{ display: 'flex', gap: '3px' }}>
+                {['5s', '10s', '15s'].map((d) => (
+                  <button key={d} onClick={() => setDuration(d)} style={{
+                    flex: 1, padding: '5px 3px', borderRadius: '6px', fontSize: '11px', fontWeight: 600, textAlign: 'center', cursor: 'pointer', border: 'none', fontFamily: 'inherit',
+                    background: duration === d ? 'rgba(139,92,246,0.2)' : 'transparent',
+                    color: duration === d ? '#c4b5fd' : '#9080cc',
+                    outline: duration === d ? '1px solid rgba(139,92,246,0.35)' : '1px solid transparent',
+                  }}>{d}</button>
+                ))}
+              </div>
+            </div>
+
+            {/* Aspect Ratio */}
+            <div style={{ background: 'rgba(15,10,46,0.6)', border: '1px solid rgba(139,92,246,0.15)', borderRadius: '9px', padding: '9px 11px' }}>
+              <div style={{ fontSize: '10px', fontWeight: 700, color: '#9080cc', textTransform: 'uppercase', letterSpacing: '.7px', marginBottom: '6px' }}>Aspect Ratio</div>
+              <div style={{ display: 'flex', gap: '3px' }}>
+                {['16:9', '9:16', '1:1'].map((r) => (
+                  <button key={r} onClick={() => setRatio(r)} style={{
+                    flex: 1, padding: '5px 3px', borderRadius: '6px', fontSize: '11px', fontWeight: 600, textAlign: 'center', cursor: 'pointer', border: 'none', fontFamily: 'inherit',
+                    background: ratio === r ? 'rgba(139,92,246,0.2)' : 'transparent',
+                    color: ratio === r ? '#c4b5fd' : '#9080cc',
+                    outline: ratio === r ? '1px solid rgba(139,92,246,0.35)' : '1px solid transparent',
+                  }}>{r}</button>
+                ))}
+              </div>
+            </div>
+
+            {/* Voice */}
+            <div style={{ background: 'rgba(15,10,46,0.6)', border: '1px solid rgba(139,92,246,0.15)', borderRadius: '9px', padding: '9px 11px' }}>
+              <div style={{ fontSize: '10px', fontWeight: 700, color: '#9080cc', textTransform: 'uppercase', letterSpacing: '.7px', marginBottom: '6px' }}>Voice</div>
+              <div style={{ display: 'flex', gap: '3px' }}>
+                {['None', 'Adam', 'Aria'].map((v) => (
+                  <button key={v} onClick={() => setVoice(v.toLowerCase())} style={{
+                    flex: 1, padding: '5px 3px', borderRadius: '6px', fontSize: '11px', fontWeight: 600, textAlign: 'center', cursor: 'pointer', border: 'none', fontFamily: 'inherit',
+                    background: voice === v.toLowerCase() ? 'rgba(139,92,246,0.2)' : 'transparent',
+                    color: voice === v.toLowerCase() ? '#c4b5fd' : '#9080cc',
+                    outline: voice === v.toLowerCase() ? '1px solid rgba(139,92,246,0.35)' : '1px solid transparent',
+                  }}>{v}</button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          {/* GENERATE BUTTON */}
+          <div style={{ padding: '12px 14px 14px' }}>
+            <a href="/api/auth/signin" style={{
+              display: 'flex', width: '100%', height: '48px', background: '#8b5cf6', border: 'none', borderRadius: '11px', color: '#fff', fontSize: '15px', fontWeight: 800, alignItems: 'center', justifyContent: 'center', gap: '7px', cursor: 'pointer', textDecoration: 'none', boxShadow: '0 0 28px rgba(139,92,246,0.4)',
+            }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="white"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+              Sign in to Generate
+              <span style={{ fontSize: '12px', fontWeight: 500, opacity: .75 }}>· 8 credits</span>
+            </a>
+            <p style={{ textAlign: 'center', fontSize: '11px', color: '#9080cc', marginTop: '8px' }}>
+              10 free credits on signup — no card required
+            </p>
+          </div>
+        </div>
+
+        {/* RIGHT — PREVIEW + INFO */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+
+          {/* VIDEO PREVIEW */}
+          <div style={{ background: 'rgba(26,18,69,0.8)', border: '1px solid rgba(139,92,246,0.25)', borderRadius: '16px', overflow: 'hidden' }}>
+            <div style={{ height: '1px', background: 'linear-gradient(90deg,transparent,#22d3ee,transparent)' }} />
+            <div style={{ padding: '11px 14px', fontSize: '10px', fontWeight: 700, color: '#9080cc', textTransform: 'uppercase', letterSpacing: '1px', borderBottom: '1px solid rgba(139,92,246,0.15)' }}>
+              Preview
+            </div>
+            <div style={{ height: '220px', background: 'linear-gradient(145deg,#07051a,#120d35)', position: 'relative', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid rgba(139,92,246,0.1)', margin: '12px', borderRadius: '10px' }}>
+              <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: '1px', background: 'linear-gradient(90deg,transparent,rgba(139,92,246,0.8),rgba(244,114,182,0.5),transparent)', animation: 'scan 3s linear infinite' }} />
+              <div style={{ width: '44px', height: '44px', borderRadius: '12px', background: 'rgba(139,92,246,0.15)', border: '1px solid rgba(139,92,246,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#c4b5fd" strokeWidth="1.5">
+                  <polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/>
+                </svg>
+              </div>
+              <div style={{ position: 'absolute', bottom: '10px', width: '80%', textAlign: 'center', fontSize: '12px', color: '#9080cc' }}>
+                Sign in to generate your first video
+              </div>
+              {/* Corner decorations */}
+              <div style={{ position: 'absolute', top: '8px', left: '8px', width: '12px', height: '12px', borderTop: '1.5px solid rgba(139,92,246,0.5)', borderLeft: '1.5px solid rgba(139,92,246,0.5)' }} />
+              <div style={{ position: 'absolute', top: '8px', right: '8px', width: '12px', height: '12px', borderTop: '1.5px solid rgba(139,92,246,0.5)', borderRight: '1.5px solid rgba(139,92,246,0.5)' }} />
+              <div style={{ position: 'absolute', bottom: '8px', left: '8px', width: '12px', height: '12px', borderBottom: '1.5px solid rgba(139,92,246,0.5)', borderLeft: '1.5px solid rgba(139,92,246,0.5)' }} />
+              <div style={{ position: 'absolute', bottom: '8px', right: '8px', width: '12px', height: '12px', borderBottom: '1.5px solid rgba(139,92,246,0.5)', borderRight: '1.5px solid rgba(139,92,246,0.5)' }} />
+            </div>
+            <div style={{ padding: '0 12px 12px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+              <div style={{ background: 'rgba(15,10,46,0.6)', border: '1px solid rgba(139,92,246,0.15)', borderRadius: '9px', padding: '10px' }}>
+                <div style={{ fontSize: '18px', fontWeight: 800, color: '#c4b5fd' }}>0</div>
+                <div style={{ fontSize: '10px', color: '#9080cc' }}>Videos generated</div>
+              </div>
+              <div style={{ background: 'rgba(15,10,46,0.6)', border: '1px solid rgba(139,92,246,0.15)', borderRadius: '9px', padding: '10px' }}>
+                <div style={{ fontSize: '18px', fontWeight: 800, color: '#34d399' }}>10</div>
+                <div style={{ fontSize: '10px', color: '#9080cc' }}>Free credits</div>
+              </div>
+            </div>
+          </div>
+
+          {/* CREDIT GUIDE */}
+          <div style={{ background: 'rgba(26,18,69,0.8)', border: '1px solid rgba(139,92,246,0.25)', borderRadius: '14px', overflow: 'hidden' }}>
+            <div style={{ padding: '11px 14px', fontSize: '12px', fontWeight: 700, color: '#fff', borderBottom: '1px solid rgba(139,92,246,0.15)' }}>Credit guide</div>
+            {[
+              { label: '480p · 5 sec', sub: 'Draft', credits: '3 cr' },
+              { label: '720p · 10 sec', sub: 'Most popular ⭐', credits: '8 cr', hot: true },
+              { label: '1080p · 10 sec', sub: 'Premium', credits: '15 cr' },
+              { label: '+ Voice narration', sub: 'Any video', credits: 'Free', green: true },
+            ].map((item) => (
+              <div key={item.label} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '9px 14px', borderBottom: '1px solid rgba(139,92,246,0.1)', background: item.hot ? 'rgba(139,92,246,0.07)' : 'transparent' }}>
+                <div>
+                  <div style={{ fontSize: '12px', fontWeight: 600, color: '#fff' }}>{item.label}</div>
+                  <div style={{ fontSize: '10px', color: item.hot ? '#c4b5fd' : '#9080cc' }}>{item.sub}</div>
+                </div>
+                <div style={{ fontSize: '13px', fontWeight: 800, color: item.green ? '#34d399' : '#c4b5fd' }}>{item.credits}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* WHY VIDRO */}
+          <div style={{ background: 'linear-gradient(135deg,rgba(139,92,246,0.1),rgba(244,114,182,0.07))', border: '1px solid rgba(139,92,246,0.25)', borderRadius: '14px', padding: '16px' }}>
+            <div style={{ fontSize: '12px', fontWeight: 700, color: '#fff', marginBottom: '10px' }}>Why Vidro?</div>
+            {[
+              { icon: '🎬', text: 'Seedance quality at 75% less cost' },
+              { icon: '🎙️', text: 'Built-in voice — no ElevenLabs needed' },
+              { icon: '✂️', text: 'Auto stitching — no CapCut needed' },
+              { icon: '⚡', text: 'Ready in minutes, download instantly' },
+            ].map((item) => (
+              <div key={item.text} style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '7px', fontSize: '12px', color: '#c8c0ff' }}>
+                <span>{item.icon}</span>
+                {item.text}
+              </div>
+            ))}
+          </div>
+
+        </div>
+      </div>
+
+      <style>{`
+        @keyframes scan { 0% { top: 0; } 100% { top: 100%; } }
+      `}</style>
     </main>
   )
 }
