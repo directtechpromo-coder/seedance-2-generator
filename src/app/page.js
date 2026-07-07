@@ -64,7 +64,11 @@ export default function Home() {
       }, 3000)
     })
 
-  const generateOneClip = async (promptText) => {
+  // UPDATED: now accepts { seed, previousVideoUrl } so scenes can chain visually,
+  // and returns { urls, seed } so the caller can capture the seed for the next scene.
+  const generateOneClip = async (promptText, chainOptions = {}) => {
+    const { seed, previousVideoUrl } = chainOptions
+
     const res = await fetch('/api/seedance', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -76,6 +80,8 @@ export default function Home() {
         resolution,
         duration,
         generate_audio: audioOn,
+        seed,
+        previous_video_url: previousVideoUrl,
       }),
     })
 
@@ -85,15 +91,17 @@ export default function Home() {
     }
 
     const result = await res.json()
+    const resolvedSeed = result?.metadata?.seed
 
     if (result.clips && result.clips.length > 0) {
       const urls = []
       for (const clip of result.clips) {
         urls.push(await pollStatus(clip.request_id))
       }
-      return urls
+      return { urls, seed: resolvedSeed }
     }
-    return [await pollStatus(result.request_id)]
+    const url = await pollStatus(result.request_id)
+    return { urls: [url], seed: resolvedSeed }
   }
 
   const stitchClips = async (urls) => {
@@ -144,9 +152,15 @@ export default function Home() {
 
     try {
       setStatusText('Generating your video... (usually 1-3 min)')
-      const urls = await generateOneClip(finalPrompt)
+      const { urls } = await generateOneClip(finalPrompt)
       if (urls.length > 1) {
-        setVideoParts(urls)
+        // FIX: previously this just showed separate Part A / Part B downloads.
+        // Now we auto-stitch them into one final video, same as Multi-Scene mode does.
+        setStatusText('Stitching parts into one final video...')
+        setStitching(true)
+        const finalUrl = await stitchClips(urls)
+        setStitching(false)
+        setVideoUrl(finalUrl)
       } else {
         setVideoUrl(urls[0])
       }
@@ -156,6 +170,7 @@ export default function Home() {
       console.error(e)
       setError(e.message || 'Something went wrong.')
       setStatusText('')
+      setStitching(false)
     } finally {
       setGenerating(false)
       stopPolling()
@@ -182,6 +197,8 @@ export default function Home() {
     setMultiProgress(scenes.map((_, i) => ({ index: i, status: 'pending' })))
 
     const allUrls = []
+    let sharedSeed = undefined // NEW: captured from scene 1, reused for every later scene
+    let previousVideoUrl = undefined // NEW: last scene's resolved video URL, chains visual continuity
 
     try {
       for (let i = 0; i < scenes.length; i++) {
@@ -197,7 +214,15 @@ export default function Home() {
           : scenes[i]
 
         try {
-          const urls = await generateOneClip(finalScenePrompt)
+          // NEW: pass sharedSeed + previousVideoUrl so this scene continues from
+          // where the last one ended, instead of being an unrelated generation.
+          const { urls, seed } = await generateOneClip(finalScenePrompt, {
+            seed: sharedSeed,
+            previousVideoUrl,
+          })
+          if (sharedSeed === undefined) sharedSeed = seed // lock in the seed from scene 1
+          previousVideoUrl = urls[urls.length - 1] // chain from this scene's last clip
+
           allUrls.push(...urls)
           setMultiProgress((prev) => prev.map((p) => (p.index === i ? { ...p, status: 'done' } : p)))
         } catch (e) {
@@ -293,7 +318,7 @@ export default function Home() {
           {mode === 'multi' ? (
             <div style={{ padding: '12px 14px 0' }}>
               <div style={{ fontSize: '10px', fontWeight: 700, color: '#9080cc', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '6px' }}>
-                Scenes <span style={{ opacity: 0.6, textTransform: 'none', fontWeight: 400 }}>(ek line = ek scene, sequentially generate + stitch hongi)</span>
+                Scenes <span style={{ opacity: 0.6, textTransform: 'none', fontWeight: 400 }}>(ek line = ek scene, sequentially generate + stitch hongi, ab har scene pichle scene se chain hogi)</span>
               </div>
               <div style={{ background: 'rgba(15,10,46,0.8)', border: '1px solid rgba(139,92,246,0.2)', borderRadius: '10px' }}>
                 <textarea
