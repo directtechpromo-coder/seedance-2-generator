@@ -270,9 +270,10 @@ export default function Home() {
     const allUrls = []
     let sharedSeed = undefined // captured from scene 1, reused for every later scene
     let previousVideoUrl = undefined // last scene's resolved video URL, chains visual continuity
-    const RESET_EVERY_N_SCENES = 4 // NEW: periodically break the frame-chain to stop quality
-    // from drifting/degrading across many scenes — every 4th scene starts fresh from the
-    // Character Bible text instead of continuing from a (slightly compressed) previous frame.
+    // FIX: only reset the chain for longer videos (8+ scenes) — for short videos every
+    // single scene matters (especially the final reveal shot), so breaking the chain
+    // there does more harm than the drift it was meant to prevent.
+    const RESET_EVERY_N_SCENES = scenes.length >= 8 ? 4 : Infinity
 
     try {
       for (let i = 0; i < scenes.length; i++) {
