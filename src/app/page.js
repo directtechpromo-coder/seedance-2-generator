@@ -18,6 +18,11 @@ export default function Home() {
   const [error, setError] = useState('')
   const [videosGenerated, setVideosGenerated] = useState(0)
 
+  const [sceneScript, setSceneScript] = useState('')
+  const [multiProgress, setMultiProgress] = useState([])
+  const [stitching, setStitching] = useState(false)
+  const cancelRef = useRef(false)
+
   const pollTimer = useRef(null)
 
   const stopPolling = () => {
@@ -59,13 +64,71 @@ export default function Home() {
       }, 3000)
     })
 
-  const handleGenerate = async () => {
+  const generateOneClip = async (promptText) => {
+    const res = await fetch('/api/seedance', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        mode: 'text-to-video',
+        prompt: promptText,
+        negative_prompt: negativePrompt || undefined,
+        aspect_ratio: ratio,
+        resolution,
+        duration,
+        generate_audio: audioOn,
+      }),
+    })
+
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}))
+      throw new Error(errData.error || `Request failed (${res.status})`)
+    }
+
+    const result = await res.json()
+
+    if (result.clips && result.clips.length > 0) {
+      const urls = []
+      for (const clip of result.clips) {
+        urls.push(await pollStatus(clip.request_id))
+      }
+      return urls
+    }
+    return [await pollStatus(result.request_id)]
+  }
+
+  const stitchClips = async (urls) => {
+    const { FFmpeg } = await import('@ffmpeg/ffmpeg')
+    const { fetchFile, toBlobURL } = await import('@ffmpeg/util')
+
+    const ffmpeg = new FFmpeg()
+    const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd'
+    setStatusText('Loading video engine...')
+    await ffmpeg.load({
+      coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
+      wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
+    })
+
+    let listContent = ''
+    for (let i = 0; i < urls.length; i++) {
+      setStatusText(`Downloading clip ${i + 1}/${urls.length} for stitching...`)
+      const data = await fetchFile(urls[i])
+      const filename = `clip${i}.mp4`
+      await ffmpeg.writeFile(filename, data)
+      listContent += `file '${filename}'\n`
+    }
+    await ffmpeg.writeFile('list.txt', listContent)
+
+    setStatusText('Stitching all clips together...')
+    await ffmpeg.exec(['-f', 'concat', '-safe', '0', '-i', 'list.txt', '-c', 'copy', 'output.mp4'])
+
+    const output = await ffmpeg.readFile('output.mp4')
+    const blob = new Blob([output.buffer], { type: 'video/mp4' })
+    return URL.createObjectURL(blob)
+  }
+
+  const handleGenerateSingle = async () => {
     if (!prompt.trim()) {
       setError('Prompt likho pehle.')
-      return
-    }
-    if (mode !== 'text') {
-      setError('Yeh mode abhi build ho raha hai — Text to Video use karo filhaal.')
       return
     }
 
@@ -80,39 +143,13 @@ export default function Home() {
       : prompt.trim()
 
     try {
-      const res = await fetch('/api/seedance', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          mode: 'text-to-video',
-          prompt: finalPrompt,
-          negative_prompt: negativePrompt || undefined,
-          aspect_ratio: ratio,
-          resolution,
-          duration,
-          generate_audio: audioOn,
-        }),
-      })
-
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}))
-        throw new Error(errData.error || `Request failed (${res.status})`)
-      }
-
-      const result = await res.json()
-
-      if (result.clips && result.clips.length > 0) {
-        setStatusText('Generating part A...')
-        const urlA = await pollStatus(result.clips[0].request_id)
-        setStatusText('Generating part B...')
-        const urlB = await pollStatus(result.clips[1].request_id)
-        setVideoParts([urlA, urlB])
+      setStatusText('Generating your video... (usually 1-3 min)')
+      const urls = await generateOneClip(finalPrompt)
+      if (urls.length > 1) {
+        setVideoParts(urls)
       } else {
-        setStatusText('Generating your video... (usually 1-3 min)')
-        const url = await pollStatus(result.request_id)
-        setVideoUrl(url)
+        setVideoUrl(urls[0])
       }
-
       setVideosGenerated((v) => v + 1)
       setStatusText('')
     } catch (e) {
@@ -122,6 +159,90 @@ export default function Home() {
     } finally {
       setGenerating(false)
       stopPolling()
+    }
+  }
+
+  const handleGenerateMultiScene = async () => {
+    const scenes = sceneScript
+      .split('\n')
+      .map((s) => s.trim())
+      .filter(Boolean)
+
+    if (scenes.length === 0) {
+      setError('Kam se kam ek scene likho (har line ek scene hai).')
+      return
+    }
+
+    setError('')
+    setVideoUrl(null)
+    setVideoParts(null)
+    setGenerating(true)
+    setStitching(false)
+    cancelRef.current = false
+    setMultiProgress(scenes.map((_, i) => ({ index: i, status: 'pending' })))
+
+    const allUrls = []
+
+    try {
+      for (let i = 0; i < scenes.length; i++) {
+        if (cancelRef.current) {
+          setStatusText('Cancelled.')
+          break
+        }
+        setStatusText(`Scene ${i + 1}/${scenes.length}: generating...`)
+        setMultiProgress((prev) => prev.map((p) => (p.index === i ? { ...p, status: 'generating' } : p)))
+
+        const finalScenePrompt = characterBible.trim()
+          ? `${characterBible.trim()}. ${scenes[i]}`
+          : scenes[i]
+
+        try {
+          const urls = await generateOneClip(finalScenePrompt)
+          allUrls.push(...urls)
+          setMultiProgress((prev) => prev.map((p) => (p.index === i ? { ...p, status: 'done' } : p)))
+        } catch (e) {
+          setMultiProgress((prev) => prev.map((p) => (p.index === i ? { ...p, status: 'failed' } : p)))
+          throw new Error(`Scene ${i + 1} fail ho gayi: ${e.message}`)
+        }
+      }
+
+      if (allUrls.length === 0) {
+        throw new Error('Koi clip generate nahi hui.')
+      }
+
+      if (allUrls.length === 1) {
+        setVideoUrl(allUrls[0])
+      } else {
+        setStitching(true)
+        const finalUrl = await stitchClips(allUrls)
+        setStitching(false)
+        setVideoUrl(finalUrl)
+      }
+
+      setVideosGenerated((v) => v + 1)
+      setStatusText('')
+    } catch (e) {
+      console.error(e)
+      setError(e.message || 'Something went wrong.')
+      setStatusText('')
+      setStitching(false)
+    } finally {
+      setGenerating(false)
+      stopPolling()
+    }
+  }
+
+  const handleCancel = () => {
+    cancelRef.current = true
+  }
+
+  const handleGenerate = () => {
+    if (mode === 'multi') {
+      handleGenerateMultiScene()
+    } else if (mode === 'text') {
+      handleGenerateSingle()
+    } else {
+      setError('Yeh mode abhi build ho raha hai — Text to Video ya Multi-Scene use karo filhaal.')
     }
   }
 
@@ -153,7 +274,7 @@ export default function Home() {
                 background: mode === tab.id ? 'rgba(139,92,246,0.2)' : 'transparent',
                 color: mode === tab.id ? '#c4b5fd' : '#9080cc',
                 outline: mode === tab.id ? '1px solid rgba(139,92,246,0.4)' : 'none',
-              }}>{tab.label}{tab.id !== 'text' ? ' (soon)' : ''}</button>
+              }}>{tab.label}{tab.id === 'image' ? ' (soon)' : ''}</button>
             ))}
           </div>
 
@@ -169,21 +290,67 @@ export default function Home() {
             </div>
           </div>
 
-          <div style={{ padding: '12px 14px 0' }}>
-            <div style={{ fontSize: '10px', fontWeight: 700, color: '#9080cc', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '6px' }}>Prompt</div>
-            <div style={{ background: 'rgba(15,10,46,0.8)', border: '1px solid rgba(139,92,246,0.2)', borderRadius: '10px', transition: 'border-color .2s' }}>
-              <textarea
-                value={prompt}
-                onChange={(e) => setPrompt(e.target.value)}
-                placeholder="Describe your video... e.g. A cinematic drone shot over a neon-lit city at night, rain falling on wet streets, slow pan with bokeh lights..."
-                style={{ width: '100%', background: 'transparent', border: 'none', outline: 'none', color: '#fff', fontSize: '13px', lineHeight: 1.65, resize: 'none', padding: '11px 12px', minHeight: '90px', fontFamily: 'inherit' }}
-              />
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', borderTop: '1px solid rgba(139,92,246,0.15)' }}>
-                <span style={{ fontSize: '11px', color: '#9080cc' }}>Text-to-Video is live now</span>
-                <span style={{ fontSize: '11px', color: '#9080cc' }}>{prompt.length} / 500</span>
+          {mode === 'multi' ? (
+            <div style={{ padding: '12px 14px 0' }}>
+              <div style={{ fontSize: '10px', fontWeight: 700, color: '#9080cc', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '6px' }}>
+                Scenes <span style={{ opacity: 0.6, textTransform: 'none', fontWeight: 400 }}>(ek line = ek scene, sequentially generate + stitch hongi)</span>
+              </div>
+              <div style={{ background: 'rgba(15,10,46,0.8)', border: '1px solid rgba(139,92,246,0.2)', borderRadius: '10px' }}>
+                <textarea
+                  value={sceneScript}
+                  onChange={(e) => setSceneScript(e.target.value)}
+                  placeholder={'Scene 1: Woman walks into a bright kitchen, smiling, holding a product\nScene 2: Close-up of product on the counter, soft morning light\nScene 3: Woman talks to camera, enthusiastic expression'}
+                  style={{ width: '100%', background: 'transparent', border: 'none', outline: 'none', color: '#fff', fontSize: '13px', lineHeight: 1.65, resize: 'none', padding: '11px 12px', minHeight: '140px', fontFamily: 'inherit' }}
+                />
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', borderTop: '1px solid rgba(139,92,246,0.15)' }}>
+                  <span style={{ fontSize: '11px', color: '#9080cc' }}>
+                    {sceneScript.split('\n').map((s) => s.trim()).filter(Boolean).length} scenes · ~{sceneScript.split('\n').map((s) => s.trim()).filter(Boolean).length * duration}s total
+                  </span>
+                </div>
+              </div>
+
+              {multiProgress.length > 0 && (
+                <div style={{ marginTop: '8px', display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '140px', overflowY: 'auto' }}>
+                  {multiProgress.map((p) => (
+                    <div key={p.index} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '5px 9px', background: 'rgba(15,10,46,0.6)', borderRadius: '6px', fontSize: '11px' }}>
+                      <span style={{
+                        color: p.status === 'done' ? '#34d399' : p.status === 'failed' ? '#f87171' : p.status === 'generating' ? '#c4b5fd' : '#9080cc',
+                      }}>
+                        {p.status === 'done' ? '✓' : p.status === 'failed' ? '✕' : p.status === 'generating' ? '◐' : '○'}
+                      </span>
+                      <span style={{ color: '#c8c0ff', flex: 1 }}>Scene {p.index + 1}</span>
+                      <span style={{ color: '#9080cc', textTransform: 'capitalize' }}>{p.status}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {generating && (
+                <button
+                  onClick={handleCancel}
+                  style={{ marginTop: '8px', width: '100%', padding: '8px', background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '8px', color: '#fca5a5', fontSize: '12px', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}
+                >
+                  Cancel remaining scenes
+                </button>
+              )}
+            </div>
+          ) : (
+            <div style={{ padding: '12px 14px 0' }}>
+              <div style={{ fontSize: '10px', fontWeight: 700, color: '#9080cc', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '6px' }}>Prompt</div>
+              <div style={{ background: 'rgba(15,10,46,0.8)', border: '1px solid rgba(139,92,246,0.2)', borderRadius: '10px', transition: 'border-color .2s' }}>
+                <textarea
+                  value={prompt}
+                  onChange={(e) => setPrompt(e.target.value)}
+                  placeholder="Describe your video... e.g. A cinematic drone shot over a neon-lit city at night, rain falling on wet streets, slow pan with bokeh lights..."
+                  style={{ width: '100%', background: 'transparent', border: 'none', outline: 'none', color: '#fff', fontSize: '13px', lineHeight: 1.65, resize: 'none', padding: '11px 12px', minHeight: '90px', fontFamily: 'inherit' }}
+                />
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', borderTop: '1px solid rgba(139,92,246,0.15)' }}>
+                  <span style={{ fontSize: '11px', color: '#9080cc' }}>Text-to-Video is live now</span>
+                  <span style={{ fontSize: '11px', color: '#9080cc' }}>{prompt.length} / 500</span>
+                </div>
               </div>
             </div>
-          </div>
+          )}
 
           <div style={{ padding: '8px 14px 0' }}>
             <div style={{ background: 'rgba(239,68,68,0.05)', border: '1px solid rgba(239,68,68,0.15)', borderRadius: '8px', padding: '8px 11px', display: 'flex', alignItems: 'center', gap: '7px' }}>
@@ -303,7 +470,7 @@ export default function Home() {
               </div>
             ) : videoParts ? (
               <div style={{ padding: '12px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                <p style={{ fontSize: '11px', color: '#9080cc' }}>Video 2 parts mein bani hai (auto-split). Manual stitch raat ko wire hoga — abhi dono parts download kar lo:</p>
+                <p style={{ fontSize: '11px', color: '#9080cc' }}>Video 2 parts mein bani hai (auto-split). Dono parts download kar lo:</p>
                 {videoParts.map((url, i) => (
                   <div key={i}>
                     <video src={url} controls style={{ width: '100%', borderRadius: '10px', background: '#000' }} />
@@ -367,7 +534,7 @@ export default function Home() {
             {[
               { icon: '🎬', text: 'Seedance quality at 75% less cost' },
               { icon: '🎙️', text: 'Native audio + lip-sync (Veo 3.1)' },
-              { icon: '✂️', text: 'Auto stitching — coming tonight' },
+              { icon: '✂️', text: 'Auto stitching for Multi-Scene — live now' },
               { icon: '⚡', text: 'Ready in minutes, download instantly' },
             ].map((item) => (
               <div key={item.text} style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '7px', fontSize: '12px', color: '#c8c0ff' }}>
