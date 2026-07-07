@@ -2,6 +2,15 @@ import { PrismaAdapter } from "@next-auth/prisma-adapter";
 import GoogleProvider from "next-auth/providers/google";
 import { prisma } from "./prisma";
 
+const ADMIN_EMAILS = (process.env.ADMIN_EMAILS || "")
+  .split(",")
+  .map((e) => e.trim().toLowerCase())
+  .filter(Boolean);
+
+export function isAdminEmail(email) {
+  return !!email && ADMIN_EMAILS.includes(email.toLowerCase());
+}
+
 export const authOptions = {
   adapter: PrismaAdapter(prisma),
   providers: [
@@ -14,7 +23,8 @@ export const authOptions = {
     async session({ session, user }) {
       if (session.user) {
         session.user.id = user.id;
-        session.user.credits = user.credits;
+        session.user.isAdmin = isAdminEmail(user.email);
+        session.user.credits = session.user.isAdmin ? "admin" : user.credits;
       }
       return session;
     },
