@@ -2,21 +2,21 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { signOut, useSession } from "next-auth/react";
+import { signIn, signOut, useSession } from "next-auth/react";
 import {
   FaCoins,
   FaSignOutAlt,
   FaMagic,
   FaBars,
   FaTimes,
+  FaGoogle,
 } from "react-icons/fa";
-import { SiVercel } from "react-icons/si";
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 
 export function Navbar() {
   const pathname = usePathname();
-  const session = { user: { id: "guest-user-123", name: "Guest", credits: 150 } };
+  const { data: session, status } = useSession();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
   const navLinks = [
@@ -33,10 +33,10 @@ export function Navbar() {
         </div>
         <div className="flex flex-col">
           <span className="font-black text-lg tracking-tighter leading-none italic uppercase text-foreground drop-shadow-sm">
-            SEEDANCE V2.0
+            VIDRO
           </span>
           <span className="text-[10px] font-black tracking-[0.3em] text-primary-500/80 uppercase">
-            Universal Engine
+            AI Video Studio
           </span>
         </div>
       </Link>
@@ -60,26 +60,45 @@ export function Navbar() {
         })}
       </div>
 
-      <div className="flex items-center gap-4 shrink-0">
-        <a
-          href="https://vercel.com/new/clone?repository-url=https://github.com/SamurAIGPT/seedance-2-generator"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="hidden sm:flex items-center gap-2 px-4 py-2 rounded-xl bg-slate-900 border border-slate-800 text-white hover:bg-slate-800 transition-all font-bold text-[10px] tracking-widest uppercase shadow-lg shadow-slate-900/10"
-        >
-          <SiVercel className="text-xs" />
-          Deploy
-        </a>
+      <div className="flex items-center gap-3 shrink-0">
+        {status === "loading" ? (
+          <div className="w-8 h-8 rounded-full border-2 border-primary-500/30 border-t-primary-500 animate-spin" />
+        ) : session?.user ? (
+          <>
+            <div className="hidden sm:flex items-center gap-2 px-4 py-2 rounded-xl bg-glass-hover border border-glass-border text-[11px] font-black text-primary-400">
+              <FaCoins />
+              {session.user.credits === "admin" ? "UNLIMITED" : session.user.credits}
+            </div>
+            {session.user.image && (
+              <img
+                src={session.user.image}
+                alt={session.user.name || "User"}
+                className="w-9 h-9 rounded-full border border-glass-border"
+              />
+            )}
+            <button
+              onClick={() => signOut()}
+              className="p-2 text-muted hover:text-foreground transition-colors"
+              title="Sign out"
+            >
+              <FaSignOutAlt />
+            </button>
+          </>
+        ) : (
+          <button
+            onClick={() => signIn("google")}
+            className="flex items-center gap-2 px-4 py-2 rounded-xl bg-primary-600 hover:bg-primary-500 text-white font-black text-[11px] uppercase tracking-widest transition-all shadow-lg shadow-primary-500/20"
+          >
+            <FaGoogle />
+            <span className="hidden sm:inline">Sign in</span>
+          </button>
+        )}
 
         <button
-          className="lg:hidden ml-2 p-2 text-muted hover:text-foreground transition-colors"
+          className="lg:hidden ml-1 p-2 text-muted hover:text-foreground transition-colors"
           onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
         >
-          {isMobileMenuOpen ? (
-            <FaTimes className="text-xl" />
-          ) : (
-            <FaBars className="text-xl" />
-          )}
+          {isMobileMenuOpen ? <FaTimes className="text-xl" /> : <FaBars className="text-xl" />}
         </button>
       </div>
 
@@ -99,9 +118,7 @@ export function Navbar() {
                   href={link.href}
                   onClick={() => setIsMobileMenuOpen(false)}
                   className={`p-4 rounded-xl font-black text-[10px] uppercase tracking-widest transition-all ${
-                    isActive
-                      ? "bg-primary-500 text-white shadow-lg"
-                      : "text-muted hover:bg-glass-bg"
+                    isActive ? "bg-primary-500 text-white shadow-lg" : "text-muted hover:bg-glass-bg"
                   }`}
                 >
                   {link.name}
