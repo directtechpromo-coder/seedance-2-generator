@@ -3,6 +3,7 @@ import { useState, useRef } from 'react'
 
 export default function Home() {
   const [prompt, setPrompt] = useState('')
+  const [characterBible, setCharacterBible] = useState('')
   const [negativePrompt, setNegativePrompt] = useState('')
   const [mode, setMode] = useState('text')
   const [resolution, setResolution] = useState('720p')
@@ -13,7 +14,7 @@ export default function Home() {
   const [generating, setGenerating] = useState(false)
   const [statusText, setStatusText] = useState('')
   const [videoUrl, setVideoUrl] = useState(null)
-  const [videoParts, setVideoParts] = useState(null) // for auto-split clips (A/B)
+  const [videoParts, setVideoParts] = useState(null)
   const [error, setError] = useState('')
   const [videosGenerated, setVideosGenerated] = useState(0)
 
@@ -74,13 +75,17 @@ export default function Home() {
     setGenerating(true)
     setStatusText('Submitting...')
 
+    const finalPrompt = characterBible.trim()
+      ? `${characterBible.trim()}. ${prompt.trim()}`
+      : prompt.trim()
+
     try {
       const res = await fetch('/api/seedance', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           mode: 'text-to-video',
-          prompt,
+          prompt: finalPrompt,
           negative_prompt: negativePrompt || undefined,
           aspect_ratio: ratio,
           resolution,
@@ -150,6 +155,18 @@ export default function Home() {
                 outline: mode === tab.id ? '1px solid rgba(139,92,246,0.4)' : 'none',
               }}>{tab.label}{tab.id !== 'text' ? ' (soon)' : ''}</button>
             ))}
+          </div>
+
+          <div style={{ padding: '12px 14px 0' }}>
+            <div style={{ fontSize: '10px', fontWeight: 700, color: '#9080cc', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '6px' }}>Character Bible <span style={{ opacity: 0.6, textTransform: 'none', fontWeight: 400 }}>(optional — keeps character consistent)</span></div>
+            <div style={{ background: 'rgba(15,10,46,0.8)', border: '1px solid rgba(139,92,246,0.2)', borderRadius: '10px' }}>
+              <textarea
+                value={characterBible}
+                onChange={(e) => setCharacterBible(e.target.value)}
+                placeholder="e.g. A 28-year-old South Asian woman, short black hair, wearing a red hoodie, warm friendly expression..."
+                style={{ width: '100%', background: 'transparent', border: 'none', outline: 'none', color: '#fff', fontSize: '13px', lineHeight: 1.6, resize: 'none', padding: '10px 12px', minHeight: '54px', fontFamily: 'inherit' }}
+              />
+            </div>
           </div>
 
           <div style={{ padding: '12px 14px 0' }}>
