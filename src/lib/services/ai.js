@@ -20,20 +20,11 @@
 //   export const maxDuration = 120; // or higher, depending on your Vercel plan
 // otherwise Vercel will kill the function before Clip B is even submitted.
 
-import { execFile } from "child_process";
-import { promisify } from "util";
-import { writeFile, readFile, unlink, mkdtemp } from "fs/promises";
-import { tmpdir } from "os";
-import path from "path";
-import ffmpegPath from "ffmpeg-static"; // npm install ffmpeg-static
 import { fal } from "@fal-ai/client"; // npm install @fal-ai/client
-
-const execFileAsync = promisify(execFile);
 
 const FAL_API_KEY = process.env.SEEDANCE_V2_API_KEY; // must be set in Vercel env vars
 
-// Configure the FAL SDK client once with our existing API key, so fal.storage.upload()
-// authenticates correctly (this is the SAME key used for queue.fal.run calls above).
+// Configure the FAL SDK client once with our existing API key.
 fal.config({ credentials: FAL_API_KEY });
 
 // Queue submission endpoints (async — returns a request_id, not the final video)
@@ -214,57 +205,25 @@ async function pollClipUntilComplete({ status_url, response_url }, { maxWaitMs =
 }
 
 /**
- * Downloads a video, extracts its last frame as a JPEG using ffmpeg, and
- * returns the frame as a Buffer. Requires `ffmpeg-static` to be installed
- * (npm install ffmpeg-static) and runnable in your deployment environment.
+ * Extracts the last frame of a video using FAL.ai's own hosted ffmpeg endpoint
+ * (fal-ai/ffmpeg-api/extract-frame) and returns a public image URL for it.
+ * No local ffmpeg binary needed — this runs entirely on FAL's servers, which
+ * avoids the "ffmpeg binary not found" issue that happens with ffmpeg-static
+ * on Vercel's serverless functions.
  */
-async function extractLastFrame(videoUrl) {
-  const tempDir = await mkdtemp(path.join(tmpdir(), "vidro-frame-"));
-  const videoPath = path.join(tempDir, "clip.mp4");
-  const framePath = path.join(tempDir, "last-frame.jpg");
+async function getLastFrameUrl(videoUrl) {
+  const result = await fal.subscribe("fal-ai/ffmpeg-api/extract-frame", {
+    input: {
+      video_url: videoUrl,
+      frame_type: "last",
+    },
+  });
 
-  try {
-    const videoRes = await fetch(videoUrl);
-    if (!videoRes.ok) throw new Error(`Failed to download clip video: ${videoRes.status}`);
-    const videoBuffer = Buffer.from(await videoRes.arrayBuffer());
-    await writeFile(videoPath, videoBuffer);
-
-    // -sseof -1 seeks to 1 second before end of file, -vframes 1 grabs one frame.
-    await execFileAsync(ffmpegPath, [
-      "-sseof", "-1",
-      "-i", videoPath,
-      "-update", "1",
-      "-q:v", "2",
-      framePath,
-    ]);
-
-    const frameBuffer = await readFile(framePath);
-    return frameBuffer;
-  } finally {
-    await unlink(videoPath).catch(() => {});
-    await unlink(framePath).catch(() => {});
+  const frameUrl = result?.data?.images?.[0]?.url;
+  if (!frameUrl) {
+    throw new Error(`No frame URL returned from fal-ai/ffmpeg-api/extract-frame: ${JSON.stringify(result)}`);
   }
-}
-
-/**
- * Uploads a frame (JPEG buffer) to FAL.ai's own file storage (same provider
- * used for generation), and returns the resulting public URL that FAL can
- * fetch as image_url for Clip B.
- */
-async function uploadFrameToStorage(frameBuffer) {
-  if (!FAL_API_KEY) {
-    throw new Error("SEEDANCE_V2_API_KEY is not set — required for FAL storage upload.");
-  }
-
-  // fal.storage.upload accepts a File/Blob-like object and handles the
-  // auth-token + upload two-step flow internally.
-  const file = new File([frameBuffer], "last-frame.jpg", { type: "image/jpeg" });
-  const url = await fal.storage.upload(file);
-
-  if (!url) {
-    throw new Error("fal.storage.upload() did not return a URL.");
-  }
-  return url;
+  return frameUrl;
 }
 
 /**
@@ -314,9 +273,7 @@ async function generate(userId, options = {}) {
     let finalModeKey = modeKey;
 
     if (previous_video_url) {
-      const lastFrameBuffer = await extractLastFrame(previous_video_url);
-      const lastFrameUrl = await uploadFrameToStorage(lastFrameBuffer);
-      finalImagesList = [lastFrameUrl];
+      finalImagesList = [await getLastFrameUrl(previous_video_url)];
       finalModeKey = QUEUE_ENDPOINTS[modelKey]["image-to-video"] ? "image-to-video" : modeKey;
     }
 
@@ -377,8 +334,7 @@ async function generate(userId, options = {}) {
     response_url: clipASubmission.response_url,
   });
 
-  const lastFrameBuffer = await extractLastFrame(clipAResult.videoUrl);
-  const lastFrameUrl = await uploadFrameToStorage(lastFrameBuffer);
+  const lastFrameUrl = await getLastFrameUrl(clipAResult.videoUrl);
 
   // --- Clip B: image-to-video, starting from Clip A's last frame, same seed ---
   const clipBModeKey = QUEUE_ENDPOINTS[modelKey]["image-to-video"] ? "image-to-video" : modeKey;
