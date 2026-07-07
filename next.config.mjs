@@ -8,14 +8,6 @@ const nextConfig = {
       },
     ],
   },
-  async rewrites() {
-    return [
-      {
-        source: "/api/auth/:path*",
-        destination: "/api/auth-bypass/:path*",
-      },
-    ];
-  },
 };
 
 export default nextConfig;
