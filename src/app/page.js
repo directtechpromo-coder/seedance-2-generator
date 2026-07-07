@@ -1,18 +1,128 @@
 'use client'
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 
 export default function Home() {
   const [prompt, setPrompt] = useState('')
+  const [negativePrompt, setNegativePrompt] = useState('')
   const [mode, setMode] = useState('text')
   const [resolution, setResolution] = useState('720p')
-  const [duration, setDuration] = useState('5s')
+  const [duration, setDuration] = useState(5)
   const [ratio, setRatio] = useState('16:9')
-  const [voice, setVoice] = useState('none')
+  const [audioOn, setAudioOn] = useState(false)
+
+  const [generating, setGenerating] = useState(false)
+  const [statusText, setStatusText] = useState('')
+  const [videoUrl, setVideoUrl] = useState(null)
+  const [videoParts, setVideoParts] = useState(null) // for auto-split clips (A/B)
+  const [error, setError] = useState('')
+  const [videosGenerated, setVideosGenerated] = useState(0)
+
+  const pollTimer = useRef(null)
+
+  const stopPolling = () => {
+    if (pollTimer.current) {
+      clearInterval(pollTimer.current)
+      pollTimer.current = null
+    }
+  }
+
+  const pollStatus = (requestId) =>
+    new Promise((resolve, reject) => {
+      let attempts = 0
+      pollTimer.current = setInterval(async () => {
+        attempts += 1
+        try {
+          const res = await fetch('/api/seedance/check-status', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ requestId }),
+          })
+          const data = await res.json()
+
+          if (data.status === 'completed') {
+            clearInterval(pollTimer.current)
+            resolve(data.imageUrl)
+          } else if (data.status === 'failed') {
+            clearInterval(pollTimer.current)
+            reject(new Error('Generation failed'))
+          } else if (attempts > 100) {
+            clearInterval(pollTimer.current)
+            reject(new Error('Timed out waiting for video'))
+          }
+        } catch (e) {
+          if (attempts > 100) {
+            clearInterval(pollTimer.current)
+            reject(e)
+          }
+        }
+      }, 3000)
+    })
+
+  const handleGenerate = async () => {
+    if (!prompt.trim()) {
+      setError('Prompt likho pehle.')
+      return
+    }
+    if (mode !== 'text') {
+      setError('Yeh mode abhi build ho raha hai — Text to Video use karo filhaal.')
+      return
+    }
+
+    setError('')
+    setVideoUrl(null)
+    setVideoParts(null)
+    setGenerating(true)
+    setStatusText('Submitting...')
+
+    try {
+      const res = await fetch('/api/seedance', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mode: 'text-to-video',
+          prompt,
+          negative_prompt: negativePrompt || undefined,
+          aspect_ratio: ratio,
+          resolution,
+          duration,
+          generate_audio: audioOn,
+        }),
+      })
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}))
+        throw new Error(errData.error || `Request failed (${res.status})`)
+      }
+
+      const result = await res.json()
+
+      if (result.clips && result.clips.length > 0) {
+        setStatusText('Generating part A...')
+        const urlA = await pollStatus(result.clips[0].request_id)
+        setStatusText('Generating part B...')
+        const urlB = await pollStatus(result.clips[1].request_id)
+        setVideoParts([urlA, urlB])
+      } else {
+        setStatusText('Generating your video... (usually 1-3 min)')
+        const url = await pollStatus(result.request_id)
+        setVideoUrl(url)
+      }
+
+      setVideosGenerated((v) => v + 1)
+      setStatusText('')
+    } catch (e) {
+      console.error(e)
+      setError(e.message || 'Something went wrong.')
+      setStatusText('')
+    } finally {
+      setGenerating(false)
+      stopPolling()
+    }
+  }
 
   return (
     <main style={{ background: '#0f0a2e', minHeight: '100vh', padding: '24px 20px' }}>
 
-      {/* PAGE TITLE */}
       <div style={{ textAlign: 'center', marginBottom: '24px' }}>
         <h1 style={{ fontSize: '28px', fontWeight: 900, color: '#fff', letterSpacing: '-1px', marginBottom: '6px' }}>
           Vidro <span style={{ background: 'linear-gradient(135deg,#a78bfa,#f472b6)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>AI Studio</span>
@@ -22,14 +132,11 @@ export default function Home() {
         </p>
       </div>
 
-      {/* MAIN GRID */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 420px', gap: '18px', maxWidth: '1100px', margin: '0 auto', alignItems: 'start' }}>
 
-        {/* LEFT — GENERATOR */}
         <div style={{ background: 'rgba(26,18,69,0.8)', border: '1px solid rgba(139,92,246,0.25)', borderRadius: '16px', overflow: 'hidden', position: 'relative' }}>
           <div style={{ height: '2px', background: 'linear-gradient(90deg,transparent,#8b5cf6,#f472b6,transparent)' }} />
 
-          {/* MODE TABS */}
           <div style={{ display: 'flex', gap: '4px', padding: '14px 14px 0' }}>
             {[
               { id: 'text', label: 'Text to Video' },
@@ -41,11 +148,10 @@ export default function Home() {
                 background: mode === tab.id ? 'rgba(139,92,246,0.2)' : 'transparent',
                 color: mode === tab.id ? '#c4b5fd' : '#9080cc',
                 outline: mode === tab.id ? '1px solid rgba(139,92,246,0.4)' : 'none',
-              }}>{tab.label}</button>
+              }}>{tab.label}{tab.id !== 'text' ? ' (soon)' : ''}</button>
             ))}
           </div>
 
-          {/* PROMPT */}
           <div style={{ padding: '12px 14px 0' }}>
             <div style={{ fontSize: '10px', fontWeight: 700, color: '#9080cc', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '6px' }}>Prompt</div>
             <div style={{ background: 'rgba(15,10,46,0.8)', border: '1px solid rgba(139,92,246,0.2)', borderRadius: '10px', transition: 'border-color .2s' }}>
@@ -56,25 +162,25 @@ export default function Home() {
                 style={{ width: '100%', background: 'transparent', border: 'none', outline: 'none', color: '#fff', fontSize: '13px', lineHeight: 1.65, resize: 'none', padding: '11px 12px', minHeight: '90px', fontFamily: 'inherit' }}
               />
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', borderTop: '1px solid rgba(139,92,246,0.15)' }}>
-                <button style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: '11px', color: '#c4b5fd', background: 'rgba(139,92,246,0.12)', border: '1px solid rgba(139,92,246,0.25)', borderRadius: '6px', padding: '4px 9px', cursor: 'pointer', fontFamily: 'inherit' }}>
-                  ✨ Enhance prompt
-                </button>
+                <span style={{ fontSize: '11px', color: '#9080cc' }}>Text-to-Video is live now</span>
                 <span style={{ fontSize: '11px', color: '#9080cc' }}>{prompt.length} / 500</span>
               </div>
             </div>
           </div>
 
-          {/* NEGATIVE PROMPT */}
           <div style={{ padding: '8px 14px 0' }}>
             <div style={{ background: 'rgba(239,68,68,0.05)', border: '1px solid rgba(239,68,68,0.15)', borderRadius: '8px', padding: '8px 11px', display: 'flex', alignItems: 'center', gap: '7px' }}>
               <span style={{ fontSize: '13px', color: 'rgba(239,68,68,0.6)' }}>⊘</span>
-              <input placeholder="Negative prompt: blurry, distorted, watermark..." style={{ background: 'transparent', border: 'none', outline: 'none', color: '#9080cc', fontSize: '12px', flex: 1, fontFamily: 'inherit' }} />
+              <input
+                value={negativePrompt}
+                onChange={(e) => setNegativePrompt(e.target.value)}
+                placeholder="Negative prompt: blurry, distorted, watermark..."
+                style={{ background: 'transparent', border: 'none', outline: 'none', color: '#fff', fontSize: '12px', flex: 1, fontFamily: 'inherit' }}
+              />
             </div>
           </div>
 
-          {/* SETTINGS */}
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '9px', padding: '10px 14px 0' }}>
-            {/* Resolution */}
             <div style={{ background: 'rgba(15,10,46,0.6)', border: '1px solid rgba(139,92,246,0.15)', borderRadius: '9px', padding: '9px 11px' }}>
               <div style={{ fontSize: '10px', fontWeight: 700, color: '#9080cc', textTransform: 'uppercase', letterSpacing: '.7px', marginBottom: '6px' }}>Resolution</div>
               <div style={{ display: 'flex', gap: '3px' }}>
@@ -89,22 +195,20 @@ export default function Home() {
               </div>
             </div>
 
-            {/* Duration */}
             <div style={{ background: 'rgba(15,10,46,0.6)', border: '1px solid rgba(139,92,246,0.15)', borderRadius: '9px', padding: '9px 11px' }}>
               <div style={{ fontSize: '10px', fontWeight: 700, color: '#9080cc', textTransform: 'uppercase', letterSpacing: '.7px', marginBottom: '6px' }}>Duration</div>
               <div style={{ display: 'flex', gap: '3px' }}>
-                {['5s', '10s', '15s'].map((d) => (
+                {[5, 10, 15].map((d) => (
                   <button key={d} onClick={() => setDuration(d)} style={{
                     flex: 1, padding: '5px 3px', borderRadius: '6px', fontSize: '11px', fontWeight: 600, textAlign: 'center', cursor: 'pointer', border: 'none', fontFamily: 'inherit',
                     background: duration === d ? 'rgba(139,92,246,0.2)' : 'transparent',
                     color: duration === d ? '#c4b5fd' : '#9080cc',
                     outline: duration === d ? '1px solid rgba(139,92,246,0.35)' : '1px solid transparent',
-                  }}>{d}</button>
+                  }}>{d}s</button>
                 ))}
               </div>
             </div>
 
-            {/* Aspect Ratio */}
             <div style={{ background: 'rgba(15,10,46,0.6)', border: '1px solid rgba(139,92,246,0.15)', borderRadius: '9px', padding: '9px 11px' }}>
               <div style={{ fontSize: '10px', fontWeight: 700, color: '#9080cc', textTransform: 'uppercase', letterSpacing: '.7px', marginBottom: '6px' }}>Aspect Ratio</div>
               <div style={{ display: 'flex', gap: '3px' }}>
@@ -119,100 +223,134 @@ export default function Home() {
               </div>
             </div>
 
-            {/* Voice */}
             <div style={{ background: 'rgba(15,10,46,0.6)', border: '1px solid rgba(139,92,246,0.15)', borderRadius: '9px', padding: '9px 11px' }}>
-              <div style={{ fontSize: '10px', fontWeight: 700, color: '#9080cc', textTransform: 'uppercase', letterSpacing: '.7px', marginBottom: '6px' }}>Voice</div>
+              <div style={{ fontSize: '10px', fontWeight: 700, color: '#9080cc', textTransform: 'uppercase', letterSpacing: '.7px', marginBottom: '6px' }}>Audio / Lip-sync</div>
               <div style={{ display: 'flex', gap: '3px' }}>
-                {['None', 'Adam', 'Aria'].map((v) => (
-                  <button key={v} onClick={() => setVoice(v.toLowerCase())} style={{
+                {[{ label: 'Off', val: false }, { label: 'On', val: true }].map((o) => (
+                  <button key={o.label} onClick={() => setAudioOn(o.val)} style={{
                     flex: 1, padding: '5px 3px', borderRadius: '6px', fontSize: '11px', fontWeight: 600, textAlign: 'center', cursor: 'pointer', border: 'none', fontFamily: 'inherit',
-                    background: voice === v.toLowerCase() ? 'rgba(139,92,246,0.2)' : 'transparent',
-                    color: voice === v.toLowerCase() ? '#c4b5fd' : '#9080cc',
-                    outline: voice === v.toLowerCase() ? '1px solid rgba(139,92,246,0.35)' : '1px solid transparent',
-                  }}>{v}</button>
+                    background: audioOn === o.val ? 'rgba(139,92,246,0.2)' : 'transparent',
+                    color: audioOn === o.val ? '#c4b5fd' : '#9080cc',
+                    outline: audioOn === o.val ? '1px solid rgba(139,92,246,0.35)' : '1px solid transparent',
+                  }}>{o.label}</button>
                 ))}
               </div>
             </div>
           </div>
 
-          {/* GENERATE BUTTON */}
+          {error && (
+            <div style={{ margin: '10px 14px 0', padding: '9px 12px', background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '8px', color: '#fca5a5', fontSize: '12px' }}>
+              {error}
+            </div>
+          )}
+
           <div style={{ padding: '12px 14px 14px' }}>
-            <a href="/api/auth/signin" style={{
-              display: 'flex', width: '100%', height: '48px', background: '#8b5cf6', border: 'none', borderRadius: '11px', color: '#fff', fontSize: '15px', fontWeight: 800, alignItems: 'center', justifyContent: 'center', gap: '7px', cursor: 'pointer', textDecoration: 'none', boxShadow: '0 0 28px rgba(139,92,246,0.4)',
-            }}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="white"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
-              Sign in to Generate
-              <span style={{ fontSize: '12px', fontWeight: 500, opacity: .75 }}>· 8 credits</span>
-            </a>
+            <button
+              onClick={handleGenerate}
+              disabled={generating}
+              style={{
+                display: 'flex', width: '100%', height: '48px', background: generating ? '#5b3fa0' : '#8b5cf6', border: 'none', borderRadius: '11px', color: '#fff', fontSize: '15px', fontWeight: 800, alignItems: 'center', justifyContent: 'center', gap: '7px', cursor: generating ? 'not-allowed' : 'pointer', textDecoration: 'none', boxShadow: '0 0 28px rgba(139,92,246,0.4)', fontFamily: 'inherit',
+              }}>
+              {generating ? (
+                <>
+                  <span style={{ width: '14px', height: '14px', border: '2px solid rgba(255,255,255,0.4)', borderTopColor: '#fff', borderRadius: '50%', display: 'inline-block', animation: 'spin 0.8s linear infinite' }} />
+                  {statusText || 'Generating...'}
+                </>
+              ) : (
+                <>
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="white"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+                  Generate Video
+                </>
+              )}
+            </button>
             <p style={{ textAlign: 'center', fontSize: '11px', color: '#9080cc', marginTop: '8px' }}>
-              10 free credits on signup — no card required
+              Generation mein 1-3 minute lag sakte hain
             </p>
           </div>
         </div>
 
-        {/* RIGHT — PREVIEW + INFO */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
 
-          {/* VIDEO PREVIEW */}
           <div style={{ background: 'rgba(26,18,69,0.8)', border: '1px solid rgba(139,92,246,0.25)', borderRadius: '16px', overflow: 'hidden' }}>
             <div style={{ height: '1px', background: 'linear-gradient(90deg,transparent,#22d3ee,transparent)' }} />
             <div style={{ padding: '11px 14px', fontSize: '10px', fontWeight: 700, color: '#9080cc', textTransform: 'uppercase', letterSpacing: '1px', borderBottom: '1px solid rgba(139,92,246,0.15)' }}>
               Preview
             </div>
-            <div style={{ height: '220px', background: 'linear-gradient(145deg,#07051a,#120d35)', position: 'relative', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid rgba(139,92,246,0.1)', margin: '12px', borderRadius: '10px' }}>
-              <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: '1px', background: 'linear-gradient(90deg,transparent,rgba(139,92,246,0.8),rgba(244,114,182,0.5),transparent)', animation: 'scan 3s linear infinite' }} />
-              <div style={{ width: '44px', height: '44px', borderRadius: '12px', background: 'rgba(139,92,246,0.15)', border: '1px solid rgba(139,92,246,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#c4b5fd" strokeWidth="1.5">
-                  <polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/>
-                </svg>
+
+            {videoUrl ? (
+              <div style={{ padding: '12px' }}>
+                <video src={videoUrl} controls autoPlay loop style={{ width: '100%', borderRadius: '10px', background: '#000' }} />
+                <a href={videoUrl} download target="_blank" rel="noopener noreferrer" style={{
+                  display: 'block', textAlign: 'center', marginTop: '10px', padding: '10px', background: 'rgba(139,92,246,0.15)', border: '1px solid rgba(139,92,246,0.3)', borderRadius: '9px', color: '#c4b5fd', fontSize: '12px', fontWeight: 700, textDecoration: 'none',
+                }}>⬇ Download Video</a>
               </div>
-              <div style={{ position: 'absolute', bottom: '10px', width: '80%', textAlign: 'center', fontSize: '12px', color: '#9080cc' }}>
-                Sign in to generate your first video
+            ) : videoParts ? (
+              <div style={{ padding: '12px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                <p style={{ fontSize: '11px', color: '#9080cc' }}>Video 2 parts mein bani hai (auto-split). Manual stitch raat ko wire hoga — abhi dono parts download kar lo:</p>
+                {videoParts.map((url, i) => (
+                  <div key={i}>
+                    <video src={url} controls style={{ width: '100%', borderRadius: '10px', background: '#000' }} />
+                    <a href={url} download target="_blank" rel="noopener noreferrer" style={{
+                      display: 'block', textAlign: 'center', marginTop: '6px', padding: '8px', background: 'rgba(139,92,246,0.15)', border: '1px solid rgba(139,92,246,0.3)', borderRadius: '9px', color: '#c4b5fd', fontSize: '11px', fontWeight: 700, textDecoration: 'none',
+                    }}>⬇ Download Part {i === 0 ? 'A' : 'B'}</a>
+                  </div>
+                ))}
               </div>
-              {/* Corner decorations */}
-              <div style={{ position: 'absolute', top: '8px', left: '8px', width: '12px', height: '12px', borderTop: '1.5px solid rgba(139,92,246,0.5)', borderLeft: '1.5px solid rgba(139,92,246,0.5)' }} />
-              <div style={{ position: 'absolute', top: '8px', right: '8px', width: '12px', height: '12px', borderTop: '1.5px solid rgba(139,92,246,0.5)', borderRight: '1.5px solid rgba(139,92,246,0.5)' }} />
-              <div style={{ position: 'absolute', bottom: '8px', left: '8px', width: '12px', height: '12px', borderBottom: '1.5px solid rgba(139,92,246,0.5)', borderLeft: '1.5px solid rgba(139,92,246,0.5)' }} />
-              <div style={{ position: 'absolute', bottom: '8px', right: '8px', width: '12px', height: '12px', borderBottom: '1.5px solid rgba(139,92,246,0.5)', borderRight: '1.5px solid rgba(139,92,246,0.5)' }} />
-            </div>
+            ) : (
+              <div style={{ height: '220px', background: 'linear-gradient(145deg,#07051a,#120d35)', position: 'relative', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid rgba(139,92,246,0.1)', margin: '12px', borderRadius: '10px' }}>
+                {generating && (
+                  <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: '1px', background: 'linear-gradient(90deg,transparent,rgba(139,92,246,0.8),rgba(244,114,182,0.5),transparent)', animation: 'scan 3s linear infinite' }} />
+                )}
+                <div style={{ width: '44px', height: '44px', borderRadius: '12px', background: 'rgba(139,92,246,0.15)', border: '1px solid rgba(139,92,246,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#c4b5fd" strokeWidth="1.5">
+                    <polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/>
+                  </svg>
+                </div>
+                <div style={{ position: 'absolute', bottom: '10px', width: '80%', textAlign: 'center', fontSize: '12px', color: '#9080cc' }}>
+                  {generating ? (statusText || 'Generating...') : 'Prompt likho aur Generate dabao'}
+                </div>
+                <div style={{ position: 'absolute', top: '8px', left: '8px', width: '12px', height: '12px', borderTop: '1.5px solid rgba(139,92,246,0.5)', borderLeft: '1.5px solid rgba(139,92,246,0.5)' }} />
+                <div style={{ position: 'absolute', top: '8px', right: '8px', width: '12px', height: '12px', borderTop: '1.5px solid rgba(139,92,246,0.5)', borderRight: '1.5px solid rgba(139,92,246,0.5)' }} />
+                <div style={{ position: 'absolute', bottom: '8px', left: '8px', width: '12px', height: '12px', borderBottom: '1.5px solid rgba(139,92,246,0.5)', borderLeft: '1.5px solid rgba(139,92,246,0.5)' }} />
+                <div style={{ position: 'absolute', bottom: '8px', right: '8px', width: '12px', height: '12px', borderBottom: '1.5px solid rgba(139,92,246,0.5)', borderRight: '1.5px solid rgba(139,92,246,0.5)' }} />
+              </div>
+            )}
+
             <div style={{ padding: '0 12px 12px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
               <div style={{ background: 'rgba(15,10,46,0.6)', border: '1px solid rgba(139,92,246,0.15)', borderRadius: '9px', padding: '10px' }}>
-                <div style={{ fontSize: '18px', fontWeight: 800, color: '#c4b5fd' }}>0</div>
+                <div style={{ fontSize: '18px', fontWeight: 800, color: '#c4b5fd' }}>{videosGenerated}</div>
                 <div style={{ fontSize: '10px', color: '#9080cc' }}>Videos generated</div>
               </div>
               <div style={{ background: 'rgba(15,10,46,0.6)', border: '1px solid rgba(139,92,246,0.15)', borderRadius: '9px', padding: '10px' }}>
-                <div style={{ fontSize: '18px', fontWeight: 800, color: '#34d399' }}>10</div>
-                <div style={{ fontSize: '10px', color: '#9080cc' }}>Free credits</div>
+                <div style={{ fontSize: '18px', fontWeight: 800, color: '#34d399' }}>∞</div>
+                <div style={{ fontSize: '10px', color: '#9080cc' }}>Free while in beta</div>
               </div>
             </div>
           </div>
 
-          {/* CREDIT GUIDE */}
           <div style={{ background: 'rgba(26,18,69,0.8)', border: '1px solid rgba(139,92,246,0.25)', borderRadius: '14px', overflow: 'hidden' }}>
-            <div style={{ padding: '11px 14px', fontSize: '12px', fontWeight: 700, color: '#fff', borderBottom: '1px solid rgba(139,92,246,0.15)' }}>Credit guide</div>
+            <div style={{ padding: '11px 14px', fontSize: '12px', fontWeight: 700, color: '#fff', borderBottom: '1px solid rgba(139,92,246,0.15)' }}>Cost guide (approx.)</div>
             {[
-              { label: '480p · 5 sec', sub: 'Draft', credits: '3 cr' },
-              { label: '720p · 10 sec', sub: 'Most popular ⭐', credits: '8 cr', hot: true },
-              { label: '1080p · 10 sec', sub: 'Premium', credits: '15 cr' },
-              { label: '+ Voice narration', sub: 'Any video', credits: 'Free', green: true },
+              { label: '480p · 5 sec, no audio', sub: 'Draft', credits: '~$0.20' },
+              { label: '720p · 10 sec, no audio', sub: 'Most popular ⭐', credits: '~$0.80', hot: true },
+              { label: '720p · 8 sec, audio on', sub: 'Lip-sync', credits: '~$1.20' },
             ].map((item) => (
               <div key={item.label} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '9px 14px', borderBottom: '1px solid rgba(139,92,246,0.1)', background: item.hot ? 'rgba(139,92,246,0.07)' : 'transparent' }}>
                 <div>
                   <div style={{ fontSize: '12px', fontWeight: 600, color: '#fff' }}>{item.label}</div>
                   <div style={{ fontSize: '10px', color: item.hot ? '#c4b5fd' : '#9080cc' }}>{item.sub}</div>
                 </div>
-                <div style={{ fontSize: '13px', fontWeight: 800, color: item.green ? '#34d399' : '#c4b5fd' }}>{item.credits}</div>
+                <div style={{ fontSize: '13px', fontWeight: 800, color: '#c4b5fd' }}>{item.credits}</div>
               </div>
             ))}
           </div>
 
-          {/* WHY VIDRO */}
           <div style={{ background: 'linear-gradient(135deg,rgba(139,92,246,0.1),rgba(244,114,182,0.07))', border: '1px solid rgba(139,92,246,0.25)', borderRadius: '14px', padding: '16px' }}>
             <div style={{ fontSize: '12px', fontWeight: 700, color: '#fff', marginBottom: '10px' }}>Why Vidro?</div>
             {[
               { icon: '🎬', text: 'Seedance quality at 75% less cost' },
-              { icon: '🎙️', text: 'Built-in voice — no ElevenLabs needed' },
-              { icon: '✂️', text: 'Auto stitching — no CapCut needed' },
+              { icon: '🎙️', text: 'Native audio + lip-sync (Veo 3.1)' },
+              { icon: '✂️', text: 'Auto stitching — coming tonight' },
               { icon: '⚡', text: 'Ready in minutes, download instantly' },
             ].map((item) => (
               <div key={item.text} style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '7px', fontSize: '12px', color: '#c8c0ff' }}>
@@ -227,6 +365,7 @@ export default function Home() {
 
       <style>{`
         @keyframes scan { 0% { top: 0; } 100% { top: 100%; } }
+        @keyframes spin { to { transform: rotate(360deg); } }
       `}</style>
     </main>
   )
