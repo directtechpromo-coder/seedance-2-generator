@@ -1,9 +1,6 @@
-import { NextResponse } from "next/server";
+import NextAuth from "next-auth";
+import { authOptions } from "@/lib/auth";
 
-export async function GET(req) {
-  return NextResponse.redirect(new URL("/", req.url));
-}
+const handler = NextAuth(authOptions);
 
-export async function POST(req) {
-  return NextResponse.json({ user: null });
-}
+export { handler as GET, handler as POST };
