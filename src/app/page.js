@@ -25,6 +25,23 @@ export default function Home() {
 
   const pollTimer = useRef(null)
 
+  // NEW: smart scene parser. If the script uses [SCENE 1], [SCENE 2]... markers,
+  // split on those. Otherwise, split on blank lines (paragraph breaks) — so a
+  // multi-line description of one scene stays as ONE scene, not several.
+  const parseScenes = (text) => {
+    const sceneMarkerRegex = /\[SCENE\s*\d+\]/gi
+    if (sceneMarkerRegex.test(text)) {
+      return text
+        .split(/\[SCENE\s*\d+\]/gi)
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0)
+    }
+    return text
+      .split(/\n\s*\n/)
+      .map((s) => s.trim())
+      .filter((s) => s.length > 0)
+  }
+
   const stopPolling = () => {
     if (pollTimer.current) {
       clearInterval(pollTimer.current)
@@ -178,10 +195,7 @@ export default function Home() {
   }
 
   const handleGenerateMultiScene = async () => {
-    const scenes = sceneScript
-      .split('\n')
-      .map((s) => s.trim())
-      .filter(Boolean)
+    const scenes = parseScenes(sceneScript)
 
     if (scenes.length === 0) {
       setError('Kam se kam ek scene likho (har line ek scene hai).')
@@ -318,18 +332,18 @@ export default function Home() {
           {mode === 'multi' ? (
             <div style={{ padding: '12px 14px 0' }}>
               <div style={{ fontSize: '10px', fontWeight: 700, color: '#9080cc', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '6px' }}>
-                Scenes <span style={{ opacity: 0.6, textTransform: 'none', fontWeight: 400 }}>(ek line = ek scene, sequentially generate + stitch hongi, ab har scene pichle scene se chain hogi)</span>
+                Scenes <span style={{ opacity: 0.6, textTransform: 'none', fontWeight: 400 }}>(use [SCENE 1], [SCENE 2]... tags, OR separate scenes with a blank line — each becomes one clip, chained for continuity)</span>
               </div>
               <div style={{ background: 'rgba(15,10,46,0.8)', border: '1px solid rgba(139,92,246,0.2)', borderRadius: '10px' }}>
                 <textarea
                   value={sceneScript}
                   onChange={(e) => setSceneScript(e.target.value)}
-                  placeholder={'Scene 1: Woman walks into a bright kitchen, smiling, holding a product\nScene 2: Close-up of product on the counter, soft morning light\nScene 3: Woman talks to camera, enthusiastic expression'}
+                  placeholder={'[SCENE 1]\nWoman walks into a bright kitchen, smiling, holding a product\n\n[SCENE 2]\nClose-up of product on the counter, soft morning light\n\n[SCENE 3]\nWoman talks to camera, enthusiastic expression'}
                   style={{ width: '100%', background: 'transparent', border: 'none', outline: 'none', color: '#fff', fontSize: '13px', lineHeight: 1.65, resize: 'none', padding: '11px 12px', minHeight: '140px', fontFamily: 'inherit' }}
                 />
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', borderTop: '1px solid rgba(139,92,246,0.15)' }}>
                   <span style={{ fontSize: '11px', color: '#9080cc' }}>
-                    {sceneScript.split('\n').map((s) => s.trim()).filter(Boolean).length} scenes · ~{sceneScript.split('\n').map((s) => s.trim()).filter(Boolean).length * duration}s total
+                    {parseScenes(sceneScript).length} scenes · ~{parseScenes(sceneScript).length * duration}s total
                   </span>
                 </div>
               </div>
