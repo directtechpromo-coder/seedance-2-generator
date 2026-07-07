@@ -26,6 +26,8 @@ export default function Home() {
   // NEW: Reference Video Editing state
   const [referenceVideoUrl, setReferenceVideoUrl] = useState('')
   const [referencePrompt, setReferencePrompt] = useState('')
+  const [referenceUploading, setReferenceUploading] = useState(false)
+  const referenceFileInputRef = useRef(null)
 
   const pollTimer = useRef(null)
 
@@ -195,6 +197,34 @@ export default function Home() {
     } finally {
       setGenerating(false)
       stopPolling()
+    }
+  }
+
+  // NEW: Uploads a video file chosen from the user's device to FAL storage,
+  // then fills referenceVideoUrl with the resulting public URL automatically.
+  const handleReferenceFileUpload = async (event) => {
+    const file = event.target.files?.[0]
+    if (!file) return
+    const MAX_SIZE_BYTES = 4.5 * 1024 * 1024 // 4.5MB — Vercel serverless request body limit
+    if (file.size > MAX_SIZE_BYTES) {
+      setError(`Video 4.5MB se badi hai (${(file.size / 1024 / 1024).toFixed(1)}MB). Chhoti/compressed video try karo.`)
+      if (referenceFileInputRef.current) referenceFileInputRef.current.value = ''
+      return
+    }
+    try {
+      setReferenceUploading(true)
+      setError('')
+      const formData = new FormData()
+      formData.append('file', file)
+      const res = await fetch('/api/upload-video', { method: 'POST', body: formData })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok || !data.url) throw new Error(data.error || 'Upload failed.')
+      setReferenceVideoUrl(data.url)
+    } catch (err) {
+      setError(err.message || 'Video upload failed.')
+    } finally {
+      setReferenceUploading(false)
+      if (referenceFileInputRef.current) referenceFileInputRef.current.value = ''
     }
   }
 
@@ -405,16 +435,33 @@ export default function Home() {
           {mode === 'reference' ? (
             <div style={{ padding: '12px 14px 0' }}>
               <div style={{ fontSize: '10px', fontWeight: 700, color: '#9080cc', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '6px' }}>
-                Reference Video Link <span style={{ opacity: 0.6, textTransform: 'none', fontWeight: 400 }}>(must be a public URL — Google Drive, Dropbox share link, or your own hosted video)</span>
+                Reference Video <span style={{ opacity: 0.6, textTransform: 'none', fontWeight: 400 }}>(upload a file — max 4.5MB — or paste a direct video URL)</span>
               </div>
-              <div style={{ background: 'rgba(15,10,46,0.8)', border: '1px solid rgba(139,92,246,0.2)', borderRadius: '10px', marginBottom: '10px' }}>
-                <input
-                  value={referenceVideoUrl}
-                  onChange={(e) => setReferenceVideoUrl(e.target.value)}
-                  placeholder="https://... link to your video"
-                  style={{ width: '100%', background: 'transparent', border: 'none', outline: 'none', color: '#fff', fontSize: '13px', padding: '11px 12px', fontFamily: 'inherit' }}
-                />
+              <div style={{ display: 'flex', gap: '8px', marginBottom: '10px' }}>
+                <div style={{ flex: 1, background: 'rgba(15,10,46,0.8)', border: '1px solid rgba(139,92,246,0.2)', borderRadius: '10px' }}>
+                  <input
+                    value={referenceVideoUrl}
+                    onChange={(e) => setReferenceVideoUrl(e.target.value)}
+                    placeholder="https://... direct video link, or upload below"
+                    style={{ width: '100%', background: 'transparent', border: 'none', outline: 'none', color: '#fff', fontSize: '13px', padding: '11px 12px', fontFamily: 'inherit' }}
+                  />
+                </div>
+                <input type="file" ref={referenceFileInputRef} hidden accept="video/mp4,video/quicktime,video/webm" onChange={handleReferenceFileUpload} />
+                <button
+                  onClick={() => referenceFileInputRef.current?.click()}
+                  disabled={referenceUploading}
+                  style={{
+                    padding: '0 16px', borderRadius: '10px', border: '1px solid rgba(139,92,246,0.3)',
+                    background: referenceUploading ? 'rgba(139,92,246,0.1)' : 'rgba(139,92,246,0.15)',
+                    color: '#c4b5fd', fontSize: '12px', fontWeight: 700, cursor: referenceUploading ? 'not-allowed' : 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap',
+                  }}
+                >
+                  {referenceUploading ? 'Uploading...' : '⬆ Upload Video'}
+                </button>
               </div>
+              {referenceVideoUrl && !referenceUploading && (
+                <div style={{ marginBottom: '10px', fontSize: '11px', color: '#34d399' }}>✓ Video ready</div>
+              )}
 
               <div style={{ fontSize: '10px', fontWeight: 700, color: '#9080cc', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '6px' }}>
                 What do you want to change? <span style={{ opacity: 0.6, textTransform: 'none', fontWeight: 400 }}>(describe the edit — background, object, style, etc.)</span>
@@ -569,7 +616,7 @@ export default function Home() {
           <div style={{ padding: '12px 14px 14px' }}>
             <button
               onClick={handleGenerate}
-              disabled={generating}
+              disabled={generating || referenceUploading}
               style={{
                 display: 'flex', width: '100%', height: '48px', background: generating ? '#5b3fa0' : '#8b5cf6', border: 'none', borderRadius: '11px', color: '#fff', fontSize: '15px', fontWeight: 800, alignItems: 'center', justifyContent: 'center', gap: '7px', cursor: generating ? 'not-allowed' : 'pointer', textDecoration: 'none', boxShadow: '0 0 28px rgba(139,92,246,0.4)', fontFamily: 'inherit',
               }}>
