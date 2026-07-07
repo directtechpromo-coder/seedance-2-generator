@@ -23,6 +23,10 @@ export default function Home() {
   const [stitching, setStitching] = useState(false)
   const cancelRef = useRef(false)
 
+  // NEW: Reference Video Editing state
+  const [referenceVideoUrl, setReferenceVideoUrl] = useState('')
+  const [referencePrompt, setReferencePrompt] = useState('')
+
   const pollTimer = useRef(null)
 
   // NEW: smart scene parser. If the script uses [SCENE 1], [SCENE 2]... markers,
@@ -194,6 +198,59 @@ export default function Home() {
     }
   }
 
+  // NEW: Reference Video Editing — user pastes a link to their own video and
+  // describes what to change. Single request, single result (no scenes, no split).
+  const handleGenerateReferenceEdit = async () => {
+    if (!referenceVideoUrl.trim()) {
+      setError('Reference video ka link paste karo pehle.')
+      return
+    }
+    if (!referencePrompt.trim()) {
+      setError('Batao kya change karna hai (prompt likho).')
+      return
+    }
+
+    setError('')
+    setVideoUrl(null)
+    setVideoParts(null)
+    setGenerating(true)
+    setStatusText('Submitting...')
+
+    try {
+      setStatusText('Editing your video... (usually 1-3 min)')
+      const res = await fetch('/api/seedance', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mode: 'reference-edit',
+          prompt: referencePrompt.trim(),
+          video_url: referenceVideoUrl.trim(),
+          resolution,
+          aspect_ratio: 'auto',
+          duration: 'auto',
+          generate_audio: audioOn,
+        }),
+      })
+
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}))
+        throw new Error(errData.error || `Request failed (${res.status})`)
+      }
+
+      const result = await res.json()
+      const url = await pollStatus(result.request_id)
+      setVideoUrl(url)
+      setVideosGenerated((v) => v + 1)
+      setStatusText('')
+    } catch (e) {
+      console.error(e)
+      setError(e.message || 'Something went wrong.')
+      setStatusText('')
+    } finally {
+      setGenerating(false)
+      stopPolling()
+    }
+  }
   const handleGenerateMultiScene = async () => {
     const scenes = parseScenes(sceneScript)
 
@@ -291,8 +348,10 @@ export default function Home() {
       handleGenerateMultiScene()
     } else if (mode === 'text') {
       handleGenerateSingle()
+    } else if (mode === 'reference') {
+      handleGenerateReferenceEdit()
     } else {
-      setError('Yeh mode abhi build ho raha hai — Text to Video ya Multi-Scene use karo filhaal.')
+      setError('Yeh mode abhi build ho raha hai — Text to Video, Multi-Scene, ya Reference Video use karo filhaal.')
     }
   }
 
@@ -316,7 +375,7 @@ export default function Home() {
           <div style={{ display: 'flex', gap: '4px', padding: '14px 14px 0' }}>
             {[
               { id: 'text', label: 'Text to Video' },
-              { id: 'image', label: 'Image to Video' },
+              { id: 'reference', label: 'Reference Video' },
               { id: 'multi', label: 'Multi-Scene' },
             ].map((tab) => (
               <button key={tab.id} onClick={() => setMode(tab.id)} style={{
@@ -324,23 +383,51 @@ export default function Home() {
                 background: mode === tab.id ? 'rgba(139,92,246,0.2)' : 'transparent',
                 color: mode === tab.id ? '#c4b5fd' : '#9080cc',
                 outline: mode === tab.id ? '1px solid rgba(139,92,246,0.4)' : 'none',
-              }}>{tab.label}{tab.id === 'image' ? ' (soon)' : ''}</button>
+              }}>{tab.label}</button>
             ))}
           </div>
 
-          <div style={{ padding: '12px 14px 0' }}>
-            <div style={{ fontSize: '10px', fontWeight: 700, color: '#9080cc', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '6px' }}>Character Bible <span style={{ opacity: 0.6, textTransform: 'none', fontWeight: 400 }}>(optional — keeps character consistent)</span></div>
-            <div style={{ background: 'rgba(15,10,46,0.8)', border: '1px solid rgba(139,92,246,0.2)', borderRadius: '10px' }}>
-              <textarea
-                value={characterBible}
-                onChange={(e) => setCharacterBible(e.target.value)}
-                placeholder="e.g. A 28-year-old South Asian woman, short black hair, wearing a red hoodie, warm friendly expression..."
-                style={{ width: '100%', background: 'transparent', border: 'none', outline: 'none', color: '#fff', fontSize: '13px', lineHeight: 1.6, resize: 'none', padding: '10px 12px', minHeight: '54px', fontFamily: 'inherit' }}
-              />
+          {mode !== 'reference' && (
+            <div style={{ padding: '12px 14px 0' }}>
+              <div style={{ fontSize: '10px', fontWeight: 700, color: '#9080cc', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '6px' }}>Character Bible <span style={{ opacity: 0.6, textTransform: 'none', fontWeight: 400 }}>(optional — keeps character consistent)</span></div>
+              <div style={{ background: 'rgba(15,10,46,0.8)', border: '1px solid rgba(139,92,246,0.2)', borderRadius: '10px' }}>
+                <textarea
+                  value={characterBible}
+                  onChange={(e) => setCharacterBible(e.target.value)}
+                  placeholder="e.g. A 28-year-old South Asian woman, short black hair, wearing a red hoodie, warm friendly expression..."
+                  style={{ width: '100%', background: 'transparent', border: 'none', outline: 'none', color: '#fff', fontSize: '13px', lineHeight: 1.6, resize: 'none', padding: '10px 12px', minHeight: '54px', fontFamily: 'inherit' }}
+                />
+              </div>
             </div>
-          </div>
+          )}
 
-          {mode === 'multi' ? (
+          {mode === 'reference' ? (
+            <div style={{ padding: '12px 14px 0' }}>
+              <div style={{ fontSize: '10px', fontWeight: 700, color: '#9080cc', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '6px' }}>
+                Reference Video Link <span style={{ opacity: 0.6, textTransform: 'none', fontWeight: 400 }}>(must be a public URL — Google Drive, Dropbox share link, or your own hosted video)</span>
+              </div>
+              <div style={{ background: 'rgba(15,10,46,0.8)', border: '1px solid rgba(139,92,246,0.2)', borderRadius: '10px', marginBottom: '10px' }}>
+                <input
+                  value={referenceVideoUrl}
+                  onChange={(e) => setReferenceVideoUrl(e.target.value)}
+                  placeholder="https://... link to your video"
+                  style={{ width: '100%', background: 'transparent', border: 'none', outline: 'none', color: '#fff', fontSize: '13px', padding: '11px 12px', fontFamily: 'inherit' }}
+                />
+              </div>
+
+              <div style={{ fontSize: '10px', fontWeight: 700, color: '#9080cc', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '6px' }}>
+                What do you want to change? <span style={{ opacity: 0.6, textTransform: 'none', fontWeight: 400 }}>(describe the edit — background, object, style, etc.)</span>
+              </div>
+              <div style={{ background: 'rgba(15,10,46,0.8)', border: '1px solid rgba(139,92,246,0.2)', borderRadius: '10px' }}>
+                <textarea
+                  value={referencePrompt}
+                  onChange={(e) => setReferencePrompt(e.target.value)}
+                  placeholder="e.g. Replace the background with a modern office, keep the person and their motion exactly the same"
+                  style={{ width: '100%', background: 'transparent', border: 'none', outline: 'none', color: '#fff', fontSize: '13px', lineHeight: 1.65, resize: 'none', padding: '11px 12px', minHeight: '90px', fontFamily: 'inherit' }}
+                />
+              </div>
+            </div>
+          ) : mode === 'multi' ? (
             <div style={{ padding: '12px 14px 0' }}>
               <div style={{ fontSize: '10px', fontWeight: 700, color: '#9080cc', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '6px' }}>
                 Scenes <span style={{ opacity: 0.6, textTransform: 'none', fontWeight: 400 }}>(use [SCENE 1], [SCENE 2]... tags, OR separate scenes with a blank line — each scene is a fixed {audioOn ? '8s' : '10s'} clip, chained for continuity)</span>
