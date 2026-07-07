@@ -8,20 +8,17 @@
 //      NO LONGER an independent text-to-video generation. Instead:
 //        - Clip A is submitted and we POLL until it completes
 //        - We extract the LAST FRAME of Clip A's output video
-//        - That frame is uploaded and used as the starting image for Clip B,
-//          submitted in image-to-video mode
+//        - That frame is uploaded to MuAPI (same service your /api/upload route
+//          already uses) and used as the starting image for Clip B, submitted
+//          in image-to-video mode
 //      This gives real visual continuity (same character/scene) between parts,
 //      instead of two unrelated generations that merely share a text prompt.
 //
 // IMPORTANT — TIMEOUT: because generate() now waits for Clip A to fully finish
 // before submitting Clip B, this request can take 30-90+ seconds. Make sure
-// route.js exports:
+// src/app/api/seedance/route.js exports:
 //   export const maxDuration = 120; // or higher, depending on your Vercel plan
 // otherwise Vercel will kill the function before Clip B is even submitted.
-//
-// IMPORTANT — TODO: uploadFrameToStorage() below is a placeholder. Wire it to
-// your existing upload logic (see the `upload/` route in your repo) so the
-// extracted frame gets a real public URL that FAL can fetch as image_url.
 
 import { execFile } from "child_process";
 import { promisify } from "util";
@@ -29,10 +26,15 @@ import { writeFile, readFile, unlink, mkdtemp } from "fs/promises";
 import { tmpdir } from "os";
 import path from "path";
 import ffmpegPath from "ffmpeg-static"; // npm install ffmpeg-static
+import { fal } from "@fal-ai/client"; // npm install @fal-ai/client
 
 const execFileAsync = promisify(execFile);
 
 const FAL_API_KEY = process.env.SEEDANCE_V2_API_KEY; // must be set in Vercel env vars
+
+// Configure the FAL SDK client once with our existing API key, so fal.storage.upload()
+// authenticates correctly (this is the SAME key used for queue.fal.run calls above).
+fal.config({ credentials: FAL_API_KEY });
 
 // Queue submission endpoints (async — returns a request_id, not the final video)
 const QUEUE_ENDPOINTS = {
@@ -72,14 +74,11 @@ function resolveModelAndMode({ generate_audio, mode }) {
 
 /** Generate one seed to reuse across all clips in a single generate() call. */
 function generateSeed() {
-  // 32-bit unsigned range, safe for both Wan and Veo seed fields.
   return Math.floor(Math.random() * 2 ** 31);
 }
 
 /**
  * Submit a single clip generation job to FAL's queue. Does NOT wait for completion.
- * Returns { request_id, status_url, response_url } (request_id is the encoded
- * "modelId|||actualRequestId|||statusUrl|||responseUrl" string used elsewhere in the app).
  */
 async function submitClip({
   modelKey,
@@ -172,7 +171,6 @@ async function submitClip({
 /**
  * Poll a submitted clip's status_url until it completes, then fetch response_url
  * for the final result (which includes the output video URL).
- * Throws if the job errors out or exceeds maxWaitMs.
  */
 async function pollClipUntilComplete({ status_url, response_url }, { maxWaitMs = 100000, intervalMs = 2500 } = {}) {
   if (!status_url || !response_url) {
@@ -209,7 +207,6 @@ async function pollClipUntilComplete({ status_url, response_url }, { maxWaitMs =
       throw new Error(`Clip generation failed: ${JSON.stringify(statusData)}`);
     }
 
-    // still IN_QUEUE / IN_PROGRESS — wait and retry
     await new Promise((r) => setTimeout(r, intervalMs));
   }
 
@@ -218,9 +215,8 @@ async function pollClipUntilComplete({ status_url, response_url }, { maxWaitMs =
 
 /**
  * Downloads a video, extracts its last frame as a JPEG using ffmpeg, and
- * returns the frame as a Buffer. Requires `ffmpeg-static` + `fluent-ffmpeg`
- * (or direct execFile, as used here) to be installed and runnable in your
- * deployment environment.
+ * returns the frame as a Buffer. Requires `ffmpeg-static` to be installed
+ * (npm install ffmpeg-static) and runnable in your deployment environment.
  */
 async function extractLastFrame(videoUrl) {
   const tempDir = await mkdtemp(path.join(tmpdir(), "vidro-frame-"));
@@ -234,7 +230,6 @@ async function extractLastFrame(videoUrl) {
     await writeFile(videoPath, videoBuffer);
 
     // -sseof -1 seeks to 1 second before end of file, -vframes 1 grabs one frame.
-    // This is far cheaper than decoding the whole video just to get the last frame.
     await execFileAsync(ffmpegPath, [
       "-sseof", "-1",
       "-i", videoPath,
@@ -246,24 +241,30 @@ async function extractLastFrame(videoUrl) {
     const frameBuffer = await readFile(framePath);
     return frameBuffer;
   } finally {
-    // best-effort cleanup, ignore errors
     await unlink(videoPath).catch(() => {});
     await unlink(framePath).catch(() => {});
   }
 }
 
 /**
- * TODO: wire this to your existing upload mechanism (see the `upload/` route
- * in your repo) so the frame gets a real, publicly fetchable URL for FAL.
- * Must return a string URL.
+ * Uploads a frame (JPEG buffer) to FAL.ai's own file storage (same provider
+ * used for generation), and returns the resulting public URL that FAL can
+ * fetch as image_url for Clip B.
  */
 async function uploadFrameToStorage(frameBuffer) {
-  throw new Error(
-    "uploadFrameToStorage() is not implemented yet — wire this to your existing upload/ route so the extracted frame gets a public URL FAL can fetch as image_url."
-  );
-  // Example shape once implemented:
-  // const url = await myExistingUploadFunction(frameBuffer, "image/jpeg");
-  // return url;
+  if (!FAL_API_KEY) {
+    throw new Error("SEEDANCE_V2_API_KEY is not set — required for FAL storage upload.");
+  }
+
+  // fal.storage.upload accepts a File/Blob-like object and handles the
+  // auth-token + upload two-step flow internally.
+  const file = new File([frameBuffer], "last-frame.jpg", { type: "image/jpeg" });
+  const url = await fal.storage.upload(file);
+
+  if (!url) {
+    throw new Error("fal.storage.upload() did not return a URL.");
+  }
+  return url;
 }
 
 /**
@@ -279,6 +280,8 @@ async function generate(userId, options = {}) {
     resolution = "720p",
     duration = 5,
     generate_audio = false,
+    seed: incomingSeed, // NEW: caller can pass a seed to reuse across scenes
+    previous_video_url, // NEW: if provided, this call's clip continues visually from this video's last frame
   } = options;
 
   if (!FAL_API_KEY) {
@@ -299,16 +302,30 @@ async function generate(userId, options = {}) {
   const { modelKey, modeKey } = resolveModelAndMode({ generate_audio, mode });
   const totalDuration = Math.min(Math.max(Number(duration) || 5, 1), 15);
   const maxPerClip = modelKey === "veo" ? VEO_MAX_DURATION : WAN_MAX_DURATION;
-  const seed = generateSeed(); // same seed reused across ALL clips in this call
+  const seed = incomingSeed !== undefined ? incomingSeed : generateSeed(); // reuse if passed in, else generate fresh
 
   // Case 1: fits in a single clip -> single submission.
+  // NEW: if previous_video_url is provided (multi-scene chaining), we extract that
+  // video's last frame, upload it, and submit THIS scene as image-to-video starting
+  // from that frame — so consecutive scenes stay visually continuous, not just
+  // "same seed" but literally continuing from where the last scene ended.
   if (totalDuration <= maxPerClip) {
+    let finalImagesList = images_list;
+    let finalModeKey = modeKey;
+
+    if (previous_video_url) {
+      const lastFrameBuffer = await extractLastFrame(previous_video_url);
+      const lastFrameUrl = await uploadFrameToStorage(lastFrameBuffer);
+      finalImagesList = [lastFrameUrl];
+      finalModeKey = QUEUE_ENDPOINTS[modelKey]["image-to-video"] ? "image-to-video" : modeKey;
+    }
+
     const clip = await submitClip({
       modelKey,
-      modeKey,
+      modeKey: finalModeKey,
       prompt,
       negative_prompt,
-      images_list,
+      images_list: finalImagesList,
       aspect_ratio,
       resolution,
       clipDuration: totalDuration,
@@ -319,17 +336,18 @@ async function generate(userId, options = {}) {
       request_id: clip.request_id,
       metadata: {
         model: modelKey,
-        mode: modeKey,
+        mode: finalModeKey,
         resolution,
         duration: totalDuration,
         generate_audio: modelKey === "veo",
-        seed,
+        seed, // NEW: frontend should capture this and pass it back in for the next scene
+        chainedFrom: previous_video_url ? true : false,
       },
     };
   }
 
   // Case 2: exceeds per-clip cap -> Clip A (text-to-video), wait for it, extract
-  // last frame, then Clip B (image-to-video) chained from that frame for continuity.
+  // last frame, upload it, then Clip B (image-to-video) chained from that frame.
   let durationA = maxPerClip;
   let durationB = totalDuration - maxPerClip;
 
