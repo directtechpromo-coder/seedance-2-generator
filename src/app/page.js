@@ -84,7 +84,7 @@ export default function Home() {
   // UPDATED: now accepts { seed, previousVideoUrl } so scenes can chain visually,
   // and returns { urls, seed } so the caller can capture the seed for the next scene.
   const generateOneClip = async (promptText, chainOptions = {}) => {
-    const { seed, previousVideoUrl } = chainOptions
+    const { seed, previousVideoUrl, durationOverride } = chainOptions
 
     const res = await fetch('/api/seedance', {
       method: 'POST',
@@ -95,7 +95,7 @@ export default function Home() {
         negative_prompt: negativePrompt || undefined,
         aspect_ratio: ratio,
         resolution,
-        duration,
+        duration: durationOverride ?? duration,
         generate_audio: audioOn,
         seed,
         previous_video_url: previousVideoUrl,
@@ -211,8 +211,11 @@ export default function Home() {
     setMultiProgress(scenes.map((_, i) => ({ index: i, status: 'pending' })))
 
     const allUrls = []
-    let sharedSeed = undefined // NEW: captured from scene 1, reused for every later scene
-    let previousVideoUrl = undefined // NEW: last scene's resolved video URL, chains visual continuity
+    let sharedSeed = undefined // captured from scene 1, reused for every later scene
+    let previousVideoUrl = undefined // last scene's resolved video URL, chains visual continuity
+    const RESET_EVERY_N_SCENES = 4 // NEW: periodically break the frame-chain to stop quality
+    // from drifting/degrading across many scenes — every 4th scene starts fresh from the
+    // Character Bible text instead of continuing from a (slightly compressed) previous frame.
 
     try {
       for (let i = 0; i < scenes.length; i++) {
@@ -228,11 +231,19 @@ export default function Home() {
           : scenes[i]
 
         try {
-          // NEW: pass sharedSeed + previousVideoUrl so this scene continues from
-          // where the last one ended, instead of being an unrelated generation.
+          // Periodically break the chain (every RESET_EVERY_N_SCENES) to prevent
+          // cumulative quality loss — those scenes generate fresh from the prompt/
+          // Character Bible instead of continuing from a compressed previous frame.
+          const shouldResetChain = i > 0 && i % RESET_EVERY_N_SCENES === 0
+          // FIX: force a safe, single-clip duration per scene (matches the old UI's
+          // behavior). The shared duration selector (5/10/15s) is for Single mode only —
+          // using it here with audio ON was silently auto-splitting EVERY scene into two
+          // unrelated clips, which is what caused the "low quality / no logic" videos.
+          const sceneDuration = audioOn ? 8 : 10
           const { urls, seed } = await generateOneClip(finalScenePrompt, {
             seed: sharedSeed,
-            previousVideoUrl,
+            previousVideoUrl: shouldResetChain ? undefined : previousVideoUrl,
+            durationOverride: sceneDuration,
           })
           if (sharedSeed === undefined) sharedSeed = seed // lock in the seed from scene 1
           previousVideoUrl = urls[urls.length - 1] // chain from this scene's last clip
@@ -332,7 +343,7 @@ export default function Home() {
           {mode === 'multi' ? (
             <div style={{ padding: '12px 14px 0' }}>
               <div style={{ fontSize: '10px', fontWeight: 700, color: '#9080cc', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '6px' }}>
-                Scenes <span style={{ opacity: 0.6, textTransform: 'none', fontWeight: 400 }}>(use [SCENE 1], [SCENE 2]... tags, OR separate scenes with a blank line — each becomes one clip, chained for continuity)</span>
+                Scenes <span style={{ opacity: 0.6, textTransform: 'none', fontWeight: 400 }}>(use [SCENE 1], [SCENE 2]... tags, OR separate scenes with a blank line — each scene is a fixed {audioOn ? '8s' : '10s'} clip, chained for continuity)</span>
               </div>
               <div style={{ background: 'rgba(15,10,46,0.8)', border: '1px solid rgba(139,92,246,0.2)', borderRadius: '10px' }}>
                 <textarea
@@ -405,7 +416,7 @@ export default function Home() {
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '9px', padding: '10px 14px 0' }}>
             <div style={{ background: 'rgba(15,10,46,0.6)', border: '1px solid rgba(139,92,246,0.15)', borderRadius: '9px', padding: '9px 11px' }}>
-              <div style={{ fontSize: '10px', fontWeight: 700, color: '#9080cc', textTransform: 'uppercase', letterSpacing: '.7px', marginBottom: '6px' }}>Resolution</div>
+              <div style={{ fontSize: '10px', fontWeight: 700, color: '#9080cc', textTransform: 'uppercase', letterSpacing: '.7px', marginBottom: '6px' }}>Resolution <span style={{ opacity: 0.6, textTransform: 'none', fontWeight: 400 }}>(720p+ recommended for Multi-Scene)</span></div>
               <div style={{ display: 'flex', gap: '3px' }}>
                 {['480p', '720p', '1080p'].map((r) => (
                   <button key={r} onClick={() => setResolution(r)} style={{
