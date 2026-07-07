@@ -57,6 +57,13 @@ const MODEL_IDS = {
 const VEO_MAX_DURATION = 8; // Veo 3.1 Fast hard limit per single generation
 const WAN_MAX_DURATION = 10; // Wan 2.2 a14b hard limit: 161 frames / 16fps ≈ 10.06s
 
+// NEW: Reference Video Editing — user pastes a link to their own video + a prompt
+// describing what to change (swap an object, change background, alter style, etc).
+// Uses ByteDance's Seedance 2.0 reference-to-video endpoint, which is purpose-built
+// for this and preserves the original motion/camera work while applying edits.
+const REFERENCE_EDIT_ENDPOINT = "https://queue.fal.run/bytedance/seedance-2.0/reference-to-video";
+const REFERENCE_EDIT_MODEL_ID = "bytedance/seedance-2.0/reference-to-video";
+
 function resolveModelAndMode({ generate_audio, mode }) {
   const modelKey = generate_audio ? "veo" : "wan";
   const modeKey = QUEUE_ENDPOINTS[modelKey][mode] ? mode : "text-to-video";
@@ -371,6 +378,78 @@ async function generate(userId, options = {}) {
 }
 
 /**
+ * NEW: Reference Video Editing. User provides a link to their own video + a
+ * prompt describing what to change (e.g. "replace the background with a beach,
+ * keep everything else the same"). Submits to FAL's queue and returns a
+ * request_id the frontend can poll the same way as other clips.
+ */
+async function generateReferenceEdit(userId, options = {}) {
+  const {
+    prompt,
+    video_url,
+    resolution = "720p",
+    aspect_ratio = "auto",
+    duration = "auto",
+    generate_audio = false,
+  } = options;
+
+  if (!FAL_API_KEY) {
+    throw new Error("FAL_API_KEY (SEEDANCE_V2_API_KEY) is not set in environment variables");
+  }
+  if (!prompt || !prompt.trim()) {
+    throw new Error("Prompt is required — describe what you want changed in the reference video.");
+  }
+  if (!video_url) {
+    throw new Error("A reference video URL is required.");
+  }
+
+  const body = {
+    prompt,
+    video_urls: [video_url],
+    resolution,
+    aspect_ratio,
+    duration,
+  };
+  if (generate_audio) body.generate_audio = true;
+
+  const response = await fetch(REFERENCE_EDIT_ENDPOINT, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Key ${FAL_API_KEY}`,
+    },
+    body: JSON.stringify(body),
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`FAL reference-to-video submit failed (${response.status}): ${errorText}`);
+  }
+
+  const data = await response.json();
+  const actualRequestId = data?.request_id;
+  const statusUrl = data?.status_url;
+  const responseUrl = data?.response_url;
+
+  if (!actualRequestId) {
+    throw new Error(`No request_id returned from FAL.ai: ${JSON.stringify(data)}`);
+  }
+
+  const encodedId = [REFERENCE_EDIT_MODEL_ID, actualRequestId, statusUrl || "", responseUrl || ""].join("|||");
+
+  return {
+    request_id: encodedId,
+    metadata: {
+      model: "seedance-2.0-reference-edit",
+      mode: "reference-edit",
+      resolution,
+      duration,
+      aspect_ratio,
+    },
+  };
+}
+
+/**
  * Estimate cost in USD before calling the API. Used for UI cost previews.
  */
 function estimateCost({ generate_audio = false, resolution = "720p", duration = 5 }) {
@@ -388,7 +467,8 @@ function estimateCost({ generate_audio = false, resolution = "720p", duration = 
 
 export const AIService = {
   generate,
+  generateReferenceEdit,
   estimateCost,
 };
 
-export { generate, estimateCost };
+export { generate, generateReferenceEdit, estimateCost };
