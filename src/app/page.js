@@ -1,5 +1,6 @@
 'use client'
 import { useState, useRef } from 'react'
+import { AD_TEMPLATES } from '@/lib/adTemplates'
 
 export default function Home() {
   const [prompt, setPrompt] = useState('')
@@ -23,11 +24,47 @@ export default function Home() {
   const [stitching, setStitching] = useState(false)
   const cancelRef = useRef(false)
 
+  // NEW: Ad Template Library state
+  const [selectedTemplateId, setSelectedTemplateId] = useState(null)
+  const [templateFieldValues, setTemplateFieldValues] = useState({})
+
   // NEW: Reference Video Editing state
   const [referenceVideoUrl, setReferenceVideoUrl] = useState('')
   const [referencePrompt, setReferencePrompt] = useState('')
   const [referenceUploading, setReferenceUploading] = useState(false)
   const referenceFileInputRef = useRef(null)
+
+  // NEW: Ad Template Library — builds the final [SCENE N] script by replacing
+  // {{PLACEHOLDER}} tokens in the chosen template with the customer's field inputs.
+  const selectedTemplate = AD_TEMPLATES.find((t) => t.id === selectedTemplateId) || null
+
+  const handleSelectTemplate = (templateId) => {
+    setSelectedTemplateId(templateId)
+    setTemplateFieldValues({})
+  }
+
+  const handleTemplateFieldChange = (key, value) => {
+    setTemplateFieldValues((prev) => ({ ...prev, [key]: value }))
+  }
+
+  const applyTemplate = () => {
+    if (!selectedTemplate) return
+    const missing = selectedTemplate.fields.filter((f) => !templateFieldValues[f.key]?.trim())
+    if (missing.length > 0) {
+      setError(`Pehle ye bhar do: ${missing.map((f) => f.label).join(', ')}`)
+      return
+    }
+    setError('')
+    const filledScenes = selectedTemplate.scenes.map((sceneText, i) => {
+      let filled = sceneText
+      selectedTemplate.fields.forEach((f) => {
+        filled = filled.replaceAll(`{{${f.key}}}`, templateFieldValues[f.key].trim())
+      })
+      return `[SCENE ${i + 1}]\n${filled}`
+    })
+    setSceneScript(filledScenes.join('\n\n'))
+    setSelectedTemplateId(null)
+  }
 
   const pollTimer = useRef(null)
 
@@ -472,6 +509,50 @@ export default function Home() {
             </div>
           ) : mode === 'multi' ? (
             <div style={{ padding: '12px 14px 0' }}>
+              {/* NEW: Ad Template Library */}
+              <div style={{ fontSize: '10px', fontWeight: 700, color: '#9080cc', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '6px' }}>
+                Ad Templates <span style={{ opacity: 0.6, textTransform: 'none', fontWeight: 400 }}>(optional — auto-fill your scenes from a proven ad structure)</span>
+              </div>
+              <div style={{ display: 'flex', gap: '6px', overflowX: 'auto', paddingBottom: '10px', marginBottom: selectedTemplate ? '10px' : '4px' }}>
+                {AD_TEMPLATES.map((t) => (
+                  <button
+                    key={t.id}
+                    onClick={() => handleSelectTemplate(selectedTemplateId === t.id ? null : t.id)}
+                    style={{
+                      flex: '0 0 auto', padding: '8px 12px', borderRadius: '9px', fontSize: '11px', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap',
+                      border: selectedTemplateId === t.id ? '1px solid rgba(139,92,246,0.5)' : '1px solid rgba(139,92,246,0.15)',
+                      background: selectedTemplateId === t.id ? 'rgba(139,92,246,0.25)' : 'rgba(15,10,46,0.6)',
+                      color: selectedTemplateId === t.id ? '#c4b5fd' : '#9080cc',
+                    }}
+                  >
+                    {t.name}
+                  </button>
+                ))}
+              </div>
+
+              {selectedTemplate && (
+                <div style={{ background: 'rgba(15,10,46,0.8)', border: '1px solid rgba(139,92,246,0.2)', borderRadius: '10px', padding: '12px', marginBottom: '12px' }}>
+                  <p style={{ fontSize: '11px', color: '#9080cc', marginBottom: '10px' }}>{selectedTemplate.description}</p>
+                  {selectedTemplate.fields.map((f) => (
+                    <div key={f.key} style={{ marginBottom: '8px' }}>
+                      <label style={{ fontSize: '10px', color: '#c4b5fd', fontWeight: 600, display: 'block', marginBottom: '4px' }}>{f.label}</label>
+                      <input
+                        value={templateFieldValues[f.key] || ''}
+                        onChange={(e) => handleTemplateFieldChange(f.key, e.target.value)}
+                        placeholder={f.placeholder}
+                        style={{ width: '100%', background: 'rgba(15,10,46,0.6)', border: '1px solid rgba(139,92,246,0.2)', borderRadius: '8px', color: '#fff', fontSize: '12px', padding: '8px 10px', fontFamily: 'inherit', outline: 'none' }}
+                      />
+                    </div>
+                  ))}
+                  <button
+                    onClick={applyTemplate}
+                    style={{ width: '100%', marginTop: '6px', padding: '9px', borderRadius: '8px', border: 'none', background: 'rgba(139,92,246,0.3)', color: '#fff', fontSize: '12px', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}
+                  >
+                    ✨ Fill Scenes From This Template
+                  </button>
+                </div>
+              )}
+
               <div style={{ fontSize: '10px', fontWeight: 700, color: '#9080cc', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '6px' }}>
                 Scenes <span style={{ opacity: 0.6, textTransform: 'none', fontWeight: 400 }}>(use [SCENE 1], [SCENE 2]... tags, OR separate scenes with a blank line — each scene is a fixed {audioOn ? '8s' : '10s'} clip)</span>
               </div>
