@@ -378,15 +378,16 @@ async function generate(userId, options = {}) {
 }
 
 /**
- * NEW: Reference Video Editing. User provides a link to their own video + a
- * prompt describing what to change (e.g. "replace the background with a beach,
- * keep everything else the same"). Submits to FAL's queue and returns a
- * request_id the frontend can poll the same way as other clips.
+ * Reference Generation — the general-purpose FAL Seedance 2.0 reference-to-video
+ * endpoint. Accepts EITHER a reference video_url (Reference Video Editing feature)
+ * OR reference image_urls (Product/Character Reference feature for Multi-Scene ads),
+ * or both. Reference this endpoint's inputs in the prompt using @Image1, @Video1, etc.
  */
 async function generateReferenceEdit(userId, options = {}) {
   const {
     prompt,
     video_url,
+    image_urls,
     resolution = "720p",
     aspect_ratio = "auto",
     duration = "auto",
@@ -397,19 +398,22 @@ async function generateReferenceEdit(userId, options = {}) {
     throw new Error("FAL_API_KEY (SEEDANCE_V2_API_KEY) is not set in environment variables");
   }
   if (!prompt || !prompt.trim()) {
-    throw new Error("Prompt is required — describe what you want changed in the reference video.");
+    throw new Error("Prompt is required — describe the scene, referencing @Image1/@Video1 as needed.");
   }
-  if (!video_url) {
-    throw new Error("A reference video URL is required.");
+  const hasVideo = !!video_url;
+  const hasImages = Array.isArray(image_urls) && image_urls.length > 0;
+  if (!hasVideo && !hasImages) {
+    throw new Error("At least one reference video or image is required.");
   }
 
   const body = {
     prompt,
-    video_urls: [video_url],
     resolution,
     aspect_ratio,
     duration,
   };
+  if (hasVideo) body.video_urls = [video_url];
+  if (hasImages) body.image_urls = image_urls;
   if (generate_audio) body.generate_audio = true;
 
   const response = await fetch(REFERENCE_EDIT_ENDPOINT, {
