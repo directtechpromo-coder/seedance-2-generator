@@ -31,7 +31,7 @@ export default function Home() {
 
   const pollTimer = useRef(null)
 
-  // NEW: smart scene parser. If the script uses [SCENE 1], [SCENE 2]... markers,
+  // Smart scene parser. If the script uses [SCENE 1], [SCENE 2]... markers,
   // split on those. Otherwise, split on blank lines (paragraph breaks) — so a
   // multi-line description of one scene stays as ONE scene, not several.
   const parseScenes = (text) => {
@@ -298,12 +298,13 @@ export default function Home() {
     setMultiProgress(scenes.map((_, i) => ({ index: i, status: 'pending' })))
 
     const allUrls = []
-    let sharedSeed = undefined // captured from scene 1, reused for every later scene
-    let previousVideoUrl = undefined // last scene's resolved video URL, chains visual continuity
-    // FIX: only reset the chain for longer videos (8+ scenes) — for short videos every
-    // single scene matters (especially the final reveal shot), so breaking the chain
-    // there does more harm than the drift it was meant to prevent.
-    const RESET_EVERY_N_SCENES = scenes.length >= 8 ? 4 : Infinity
+    let sharedSeed = undefined // captured from scene 1, reused for every later scene — this is
+    // now the ONLY consistency mechanism (plus Character Bible text). Frame-to-frame chaining
+    // was removed: it improved visual consistency but could force illogical results when an
+    // action changes discretely between scenes (e.g. "getting in a car" -> "driving" could
+    // produce a character appearing to drive from the back seat). For a product customers use
+    // by just pasting a prompt, correct logic matters more than perfect visual continuity —
+    // same seed + a detailed Character Bible gets consistency close enough without that risk.
 
     try {
       for (let i = 0; i < scenes.length; i++) {
@@ -319,10 +320,6 @@ export default function Home() {
           : scenes[i]
 
         try {
-          // Periodically break the chain (every RESET_EVERY_N_SCENES) to prevent
-          // cumulative quality loss — those scenes generate fresh from the prompt/
-          // Character Bible instead of continuing from a compressed previous frame.
-          const shouldResetChain = i > 0 && i % RESET_EVERY_N_SCENES === 0
           // FIX: force a safe, single-clip duration per scene (matches the old UI's
           // behavior). The shared duration selector (5/10/15s) is for Single mode only —
           // using it here with audio ON was silently auto-splitting EVERY scene into two
@@ -330,11 +327,9 @@ export default function Home() {
           const sceneDuration = audioOn ? 8 : 10
           const { urls, seed } = await generateOneClip(finalScenePrompt, {
             seed: sharedSeed,
-            previousVideoUrl: shouldResetChain ? undefined : previousVideoUrl,
             durationOverride: sceneDuration,
           })
           if (sharedSeed === undefined) sharedSeed = seed // lock in the seed from scene 1
-          previousVideoUrl = urls[urls.length - 1] // chain from this scene's last clip
 
           allUrls.push(...urls)
           setMultiProgress((prev) => prev.map((p) => (p.index === i ? { ...p, status: 'done' } : p)))
@@ -478,7 +473,7 @@ export default function Home() {
           ) : mode === 'multi' ? (
             <div style={{ padding: '12px 14px 0' }}>
               <div style={{ fontSize: '10px', fontWeight: 700, color: '#9080cc', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '6px' }}>
-                Scenes <span style={{ opacity: 0.6, textTransform: 'none', fontWeight: 400 }}>(use [SCENE 1], [SCENE 2]... tags, OR separate scenes with a blank line — each scene is a fixed {audioOn ? '8s' : '10s'} clip, chained for continuity)</span>
+                Scenes <span style={{ opacity: 0.6, textTransform: 'none', fontWeight: 400 }}>(use [SCENE 1], [SCENE 2]... tags, OR separate scenes with a blank line — each scene is a fixed {audioOn ? '8s' : '10s'} clip)</span>
               </div>
               <div style={{ background: 'rgba(15,10,46,0.8)', border: '1px solid rgba(139,92,246,0.2)', borderRadius: '10px' }}>
                 <textarea
