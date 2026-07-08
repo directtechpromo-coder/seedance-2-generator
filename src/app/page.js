@@ -28,6 +28,11 @@ export default function Home() {
   const [selectedTemplateId, setSelectedTemplateId] = useState(null)
   const [templateFieldValues, setTemplateFieldValues] = useState({})
 
+  // NEW: Product/Character Reference Images (Multi-Scene) — optional, shows the AI
+  // exactly what your product/character looks like instead of it being imagined.
+  const [referenceImages, setReferenceImages] = useState([]) // array of {url, uploading}
+  const referenceImageInputRef = useRef(null)
+
   // NEW: Reference Video Editing state
   const [referenceVideoUrl, setReferenceVideoUrl] = useState('')
   const [referencePrompt, setReferencePrompt] = useState('')
@@ -66,7 +71,43 @@ export default function Home() {
     setSelectedTemplateId(null)
   }
 
+  // NEW: Uploads a product/character reference image (up to 3), used to ground
+  // Multi-Scene generations in what the product/character actually looks like.
+  const handleReferenceImageUpload = async (event) => {
+    const files = Array.from(event.target.files || [])
+    if (files.length === 0) return
+    const MAX_SIZE_BYTES = 4.5 * 1024 * 1024
+    const room = 3 - referenceImages.length
+    const filesToUpload = files.slice(0, room)
+
+    for (const file of filesToUpload) {
+      if (file.size > MAX_SIZE_BYTES) {
+        setError(`${file.name} 4.5MB se badi hai. Chhoti image try karo.`)
+        continue
+      }
+      const placeholderId = `${Date.now()}-${Math.random()}`
+      setReferenceImages((prev) => [...prev, { id: placeholderId, url: null, uploading: true }])
+      try {
+        const formData = new FormData()
+        formData.append('file', file)
+        const res = await fetch('/api/upload-video', { method: 'POST', body: formData })
+        const data = await res.json().catch(() => ({}))
+        if (!res.ok || !data.url) throw new Error(data.error || 'Upload failed.')
+        setReferenceImages((prev) => prev.map((img) => (img.id === placeholderId ? { ...img, url: data.url, uploading: false } : img)))
+      } catch (err) {
+        setError(err.message || 'Image upload failed.')
+        setReferenceImages((prev) => prev.filter((img) => img.id !== placeholderId))
+      }
+    }
+    if (referenceImageInputRef.current) referenceImageInputRef.current.value = ''
+  }
+
+  const removeReferenceImage = (id) => {
+    setReferenceImages((prev) => prev.filter((img) => img.id !== id))
+  }
+
   const pollTimer = useRef(null)
+
 
   // Smart scene parser. If the script uses [SCENE 1], [SCENE 2]... markers,
   // split on those. Otherwise, split on blank lines (paragraph breaks) — so a
@@ -127,22 +168,35 @@ export default function Home() {
   // UPDATED: now accepts { seed, previousVideoUrl } so scenes can chain visually,
   // and returns { urls, seed } so the caller can capture the seed for the next scene.
   const generateOneClip = async (promptText, chainOptions = {}) => {
-    const { seed, previousVideoUrl, durationOverride } = chainOptions
+    const { seed, previousVideoUrl, durationOverride, imageUrls } = chainOptions
+    const useReferenceImages = Array.isArray(imageUrls) && imageUrls.length > 0
+
+    const body = useReferenceImages
+      ? {
+          mode: 'reference-images',
+          prompt: promptText,
+          image_urls: imageUrls,
+          resolution,
+          aspect_ratio: ratio,
+          duration: durationOverride ? String(durationOverride) : 'auto',
+          generate_audio: audioOn,
+        }
+      : {
+          mode: 'text-to-video',
+          prompt: promptText,
+          negative_prompt: negativePrompt || undefined,
+          aspect_ratio: ratio,
+          resolution,
+          duration: durationOverride ?? duration,
+          generate_audio: audioOn,
+          seed,
+          previous_video_url: previousVideoUrl,
+        }
 
     const res = await fetch('/api/seedance', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        mode: 'text-to-video',
-        prompt: promptText,
-        negative_prompt: negativePrompt || undefined,
-        aspect_ratio: ratio,
-        resolution,
-        duration: durationOverride ?? duration,
-        generate_audio: audioOn,
-        seed,
-        previous_video_url: previousVideoUrl,
-      }),
+      body: JSON.stringify(body),
     })
 
     if (!res.ok) {
@@ -352,9 +406,13 @@ export default function Home() {
         setStatusText(`Scene ${i + 1}/${scenes.length}: generating...`)
         setMultiProgress((prev) => prev.map((p) => (p.index === i ? { ...p, status: 'generating' } : p)))
 
-        const finalScenePrompt = characterBible.trim()
+        const readyReferenceImages = referenceImages.filter((img) => img.url).map((img) => img.url)
+        const referenceTag = readyReferenceImages.length > 0
+          ? `@Image1 shows exactly what the product/character looks like — keep it visually identical. `
+          : ''
+        const finalScenePrompt = referenceTag + (characterBible.trim()
           ? `${characterBible.trim()}. ${scenes[i]}`
-          : scenes[i]
+          : scenes[i])
 
         try {
           // FIX: force a safe, single-clip duration per scene (matches the old UI's
@@ -365,6 +423,7 @@ export default function Home() {
           const { urls, seed } = await generateOneClip(finalScenePrompt, {
             seed: sharedSeed,
             durationOverride: sceneDuration,
+            imageUrls: readyReferenceImages,
           })
           if (sharedSeed === undefined) sharedSeed = seed // lock in the seed from scene 1
 
@@ -552,6 +611,37 @@ export default function Home() {
                   </button>
                 </div>
               )}
+
+              {/* NEW: Product/Character Reference Images */}
+              <div style={{ fontSize: '10px', fontWeight: 700, color: '#9080cc', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '6px' }}>
+                Product/Character Reference Images <span style={{ opacity: 0.6, textTransform: 'none', fontWeight: 400 }}>(optional — upload up to 3 photos so the AI shows the real thing instead of imagining it. Higher cost per scene when used.)</span>
+              </div>
+              <div style={{ display: 'flex', gap: '8px', marginBottom: '12px', flexWrap: 'wrap' }}>
+                {referenceImages.map((img) => (
+                  <div key={img.id} style={{ position: 'relative', width: '64px', height: '64px', borderRadius: '8px', overflow: 'hidden', border: '1px solid rgba(139,92,246,0.3)', background: 'rgba(15,10,46,0.6)' }}>
+                    {img.uploading ? (
+                      <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '9px', color: '#9080cc' }}>...</div>
+                    ) : (
+                      <>
+                        <img src={img.url} alt="reference" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                        <button
+                          onClick={() => removeReferenceImage(img.id)}
+                          style={{ position: 'absolute', top: '2px', right: '2px', width: '16px', height: '16px', borderRadius: '50%', border: 'none', background: 'rgba(0,0,0,0.6)', color: '#fff', fontSize: '10px', cursor: 'pointer', lineHeight: 1 }}
+                        >✕</button>
+                      </>
+                    )}
+                  </div>
+                ))}
+                {referenceImages.length < 3 && (
+                  <>
+                    <input type="file" ref={referenceImageInputRef} hidden accept="image/png,image/jpeg,image/webp" multiple onChange={handleReferenceImageUpload} />
+                    <button
+                      onClick={() => referenceImageInputRef.current?.click()}
+                      style={{ width: '64px', height: '64px', borderRadius: '8px', border: '1px dashed rgba(139,92,246,0.4)', background: 'rgba(15,10,46,0.4)', color: '#9080cc', fontSize: '20px', cursor: 'pointer' }}
+                    >+</button>
+                  </>
+                )}
+              </div>
 
               <div style={{ fontSize: '10px', fontWeight: 700, color: '#9080cc', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '6px' }}>
                 Scenes <span style={{ opacity: 0.6, textTransform: 'none', fontWeight: 400 }}>(use [SCENE 1], [SCENE 2]... tags, OR separate scenes with a blank line — each scene is a fixed {audioOn ? '8s' : '10s'} clip)</span>
