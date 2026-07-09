@@ -302,6 +302,7 @@ export default function Home() {
   ]
 
   const [exportingFormat, setExportingFormat] = useState(null)
+  const [addingCaptions, setAddingCaptions] = useState(false)
 
   const reframeVideo = async (sourceUrl, targetRatio, label) => {
     setExportingFormat(label)
@@ -334,6 +335,72 @@ export default function Home() {
       setError(e.message || 'Export failed. Please try again.')
     } finally {
       setExportingFormat(null)
+    }
+  }
+
+  // NEW: Auto-Captions. Converts transcribed chunks into SRT subtitle format.
+  const buildSRT = (chunks) => {
+    const formatTime = (s) => {
+      const h = String(Math.floor(s / 3600)).padStart(2, '0')
+      const m = String(Math.floor((s % 3600) / 60)).padStart(2, '0')
+      const sec = String(Math.floor(s % 60)).padStart(2, '0')
+      const ms = String(Math.round((s % 1) * 1000)).padStart(3, '0')
+      return `${h}:${m}:${sec},${ms}`
+    }
+    return chunks
+      .map((c, i) => `${i + 1}\n${formatTime(c.start)} --> ${formatTime(c.end)}\n${c.text.trim()}\n`)
+      .join('\n')
+  }
+
+  // NEW: Transcribes the current video's audio and burns in TikTok-style
+  // captions (white text, black outline, bottom-centered). Replaces the
+  // current preview/download with the captioned version.
+  const handleAddCaptions = async () => {
+    if (!videoUrl) return
+    setError('')
+    setAddingCaptions(true)
+    try {
+      setStatusText('Transcribing audio...')
+      const res = await fetch('/api/seedance/transcribe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ video_url: videoUrl }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Transcription failed.')
+
+      const chunks = data.data?.chunks || []
+      if (chunks.length === 0) {
+        throw new Error('No speech was detected in this video — captions need audio with dialogue (Audio ON).')
+      }
+
+      const srtContent = buildSRT(chunks)
+
+      setStatusText('Burning in captions...')
+      const ffmpeg = await loadFFmpeg()
+      const { fetchFile } = await import('@ffmpeg/util')
+      const videoData = await fetchFile(videoUrl)
+      await ffmpeg.writeFile('caption_input.mp4', videoData)
+      await ffmpeg.writeFile('captions.srt', srtContent)
+
+      await ffmpeg.exec([
+        '-i', 'caption_input.mp4',
+        '-vf', "subtitles=captions.srt:force_style='FontName=Arial,FontSize=22,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=2,Shadow=0,Alignment=2,MarginV=60'",
+        '-c:a', 'copy',
+        'caption_output.mp4',
+      ])
+
+      const output = await ffmpeg.readFile('caption_output.mp4')
+      const blob = new Blob([output.buffer], { type: 'video/mp4' })
+      const url = URL.createObjectURL(blob)
+      setVideoUrl(url)
+      setStatusText('')
+    } catch (e) {
+      console.error(e)
+      setError(e.message || 'Failed to add captions. Please try again.')
+      setStatusText('')
+    } finally {
+      setAddingCaptions(false)
     }
   }
 
@@ -944,8 +1011,21 @@ export default function Home() {
             {videoUrl ? (
               <div style={{ padding: '12px' }}>
                 <video src={videoUrl} controls autoPlay loop style={{ width: '100%', borderRadius: '10px', background: '#000' }} />
+
+                {/* NEW: Auto-Captions */}
+                <button
+                  onClick={handleAddCaptions}
+                  disabled={addingCaptions || exportingFormat !== null}
+                  style={{
+                    display: 'block', width: '100%', textAlign: 'center', marginTop: '10px', padding: '10px', borderRadius: '9px', border: '1px solid rgba(139,92,246,0.3)',
+                    background: addingCaptions ? 'rgba(139,92,246,0.08)' : 'rgba(139,92,246,0.15)', color: '#c4b5fd', fontSize: '12px', fontWeight: 700, cursor: addingCaptions ? 'not-allowed' : 'pointer', fontFamily: 'inherit',
+                  }}
+                >
+                  {addingCaptions ? (statusText || 'Adding captions...') : '💬 Add Captions'}
+                </button>
+
                 <a href={videoUrl} download target="_blank" rel="noopener noreferrer" style={{
-                  display: 'block', textAlign: 'center', marginTop: '10px', padding: '10px', background: 'rgba(139,92,246,0.15)', border: '1px solid rgba(139,92,246,0.3)', borderRadius: '9px', color: '#c4b5fd', fontSize: '12px', fontWeight: 700, textDecoration: 'none',
+                  display: 'block', textAlign: 'center', marginTop: '8px', padding: '10px', background: 'rgba(139,92,246,0.15)', border: '1px solid rgba(139,92,246,0.3)', borderRadius: '9px', color: '#c4b5fd', fontSize: '12px', fontWeight: 700, textDecoration: 'none',
                 }}>⬇ Download Video</a>
 
                 {/* NEW: Multi-Aspect Export */}
@@ -958,7 +1038,7 @@ export default function Home() {
                       <button
                         key={f.id}
                         onClick={() => reframeVideo(videoUrl, f.ratio, `${f.label} ${f.id}`)}
-                        disabled={exportingFormat !== null}
+                        disabled={exportingFormat !== null || addingCaptions}
                         style={{
                           display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '9px 12px', borderRadius: '8px',
                           border: '1px solid rgba(139,92,246,0.25)', background: 'rgba(15,10,46,0.6)', color: '#c8c0ff', fontSize: '12px', fontWeight: 600,
