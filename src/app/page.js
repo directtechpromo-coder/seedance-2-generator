@@ -1,5 +1,6 @@
 'use client'
 import { useState, useRef } from 'react'
+import { useSession } from 'next-auth/react'
 import { AD_TEMPLATES } from '@/lib/adTemplates'
 import { scanForRiskyContent } from '@/lib/contentRiskCheck'
 
@@ -27,6 +28,9 @@ function RiskWarningBanner({ text }) {
 }
 
 export default function Home() {
+  const { data: session, status: sessionStatus } = useSession()
+  const isSignedIn = sessionStatus === 'authenticated'
+
   const [prompt, setPrompt] = useState('')
   const [characterBible, setCharacterBible] = useState('')
   const [negativePrompt, setNegativePrompt] = useState('')
@@ -977,11 +981,16 @@ export default function Home() {
           )}
 
           <div style={{ padding: '12px 14px 14px' }}>
+            {!isSignedIn && sessionStatus !== 'loading' && (
+              <div style={{ marginBottom: '10px', padding: '9px 12px', background: 'rgba(139,92,246,0.1)', border: '1px solid rgba(139,92,246,0.3)', borderRadius: '8px', color: '#c4b5fd', fontSize: '12px', textAlign: 'center' }}>
+                Sign in above to start generating videos.
+              </div>
+            )}
             <button
               onClick={handleGenerate}
-              disabled={generating || referenceUploading}
+              disabled={generating || referenceUploading || !isSignedIn}
               style={{
-                display: 'flex', width: '100%', height: '48px', background: generating ? '#5b3fa0' : '#8b5cf6', border: 'none', borderRadius: '11px', color: '#fff', fontSize: '15px', fontWeight: 800, alignItems: 'center', justifyContent: 'center', gap: '7px', cursor: generating ? 'not-allowed' : 'pointer', textDecoration: 'none', boxShadow: '0 0 28px rgba(139,92,246,0.4)', fontFamily: 'inherit',
+                display: 'flex', width: '100%', height: '48px', background: (generating || !isSignedIn) ? '#5b3fa0' : '#8b5cf6', border: 'none', borderRadius: '11px', color: '#fff', fontSize: '15px', fontWeight: 800, alignItems: 'center', justifyContent: 'center', gap: '7px', cursor: (generating || !isSignedIn) ? 'not-allowed' : 'pointer', textDecoration: 'none', boxShadow: '0 0 28px rgba(139,92,246,0.4)', fontFamily: 'inherit', opacity: !isSignedIn ? 0.6 : 1,
               }}>
               {generating ? (
                 <>
@@ -991,7 +1000,7 @@ export default function Home() {
               ) : (
                 <>
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="white"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
-                  Generate Video
+                  {isSignedIn ? 'Generate Video' : 'Sign in to Generate'}
                 </>
               )}
             </button>
