@@ -136,6 +136,10 @@ export default function Home() {
   const pollStatus = (requestId) =>
     new Promise((resolve, reject) => {
       let attempts = 0
+      // FIX: raised from 100 (5 min) to 240 (12 min) — reference-image generations
+      // (Seedance 2.0) and some audio generations can genuinely take longer than 5
+      // minutes; the old limit was cutting off requests that were still processing.
+      const MAX_ATTEMPTS = 240
       pollTimer.current = setInterval(async () => {
         attempts += 1
         try {
@@ -152,12 +156,12 @@ export default function Home() {
           } else if (data.status === 'failed') {
             clearInterval(pollTimer.current)
             reject(new Error('Generation failed'))
-          } else if (attempts > 100) {
+          } else if (attempts > MAX_ATTEMPTS) {
             clearInterval(pollTimer.current)
             reject(new Error('Timed out waiting for video'))
           }
         } catch (e) {
-          if (attempts > 100) {
+          if (attempts > MAX_ATTEMPTS) {
             clearInterval(pollTimer.current)
             reject(e)
           }
