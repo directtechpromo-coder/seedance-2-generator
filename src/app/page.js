@@ -134,6 +134,22 @@ export default function Home() {
   }
 
   const pollTimer = useRef(null)
+  const ffmpegRef = useRef(null) // caches the loaded FFmpeg.wasm instance so we don't reload it for every stitch/export
+
+  // Loads FFmpeg.wasm once and reuses it for stitching AND multi-aspect export.
+  const loadFFmpeg = async () => {
+    if (ffmpegRef.current) return ffmpegRef.current
+    const { FFmpeg } = await import('@ffmpeg/ffmpeg')
+    const { toBlobURL } = await import('@ffmpeg/util')
+    const ffmpeg = new FFmpeg()
+    const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd'
+    await ffmpeg.load({
+      coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
+      wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
+    })
+    ffmpegRef.current = ffmpeg
+    return ffmpeg
+  }
 
 
   // Smart scene parser. If the script uses [SCENE 1], [SCENE 2]... markers,
@@ -250,16 +266,9 @@ export default function Home() {
   }
 
   const stitchClips = async (urls) => {
-    const { FFmpeg } = await import('@ffmpeg/ffmpeg')
-    const { fetchFile, toBlobURL } = await import('@ffmpeg/util')
-
-    const ffmpeg = new FFmpeg()
-    const baseURL = 'https://unpkg.com/@ffmpeg/core@0.12.6/dist/umd'
+    const { fetchFile } = await import('@ffmpeg/util')
+    const ffmpeg = await loadFFmpeg()
     setStatusText('Loading video engine...')
-    await ffmpeg.load({
-      coreURL: await toBlobURL(`${baseURL}/ffmpeg-core.js`, 'text/javascript'),
-      wasmURL: await toBlobURL(`${baseURL}/ffmpeg-core.wasm`, 'application/wasm'),
-    })
 
     let listContent = ''
     for (let i = 0; i < urls.length; i++) {
@@ -277,6 +286,55 @@ export default function Home() {
     const output = await ffmpeg.readFile('output.mp4')
     const blob = new Blob([output.buffer], { type: 'video/mp4' })
     return URL.createObjectURL(blob)
+  }
+
+  // NEW: Multi-Aspect Export. Re-crops the already-generated video into a
+  // different aspect ratio using a smart center-crop (no re-generation needed).
+  // Works by comparing the source's aspect ratio to the target: if the source
+  // is proportionally wider than the target, it crops the width down (centered);
+  // if narrower, it crops the height down (centered). Note: converting between
+  // very different shapes (e.g. portrait -> landscape) will crop away a large
+  // part of the frame, since we only crop — we never stretch or add padding.
+  const EXPORT_FORMATS = [
+    { id: '9:16', label: 'TikTok / Reels / Shorts', ratio: 9 / 16 },
+    { id: '1:1', label: 'Instagram Feed', ratio: 1 },
+    { id: '16:9', label: 'YouTube', ratio: 16 / 9 },
+  ]
+
+  const [exportingFormat, setExportingFormat] = useState(null)
+
+  const reframeVideo = async (sourceUrl, targetRatio, label) => {
+    setExportingFormat(label)
+    setError('')
+    try {
+      const { fetchFile } = await import('@ffmpeg/util')
+      const ffmpeg = await loadFFmpeg()
+      const data = await fetchFile(sourceUrl)
+      await ffmpeg.writeFile('reframe_input.mp4', data)
+
+      const r = targetRatio
+      const cropExpr = [
+        '-vf',
+        `crop=w='if(gt(iw/ih,${r}),ih*${r},iw)':h='if(gt(iw/ih,${r}),ih,iw/${r})'`,
+      ]
+
+      await ffmpeg.exec(['-i', 'reframe_input.mp4', ...cropExpr, '-c:a', 'copy', 'reframe_output.mp4'])
+
+      const output = await ffmpeg.readFile('reframe_output.mp4')
+      const blob = new Blob([output.buffer], { type: 'video/mp4' })
+      const url = URL.createObjectURL(blob)
+
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `vidro-${label.replace(/[^a-z0-9]/gi, '-').toLowerCase()}-${Date.now()}.mp4`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (e) {
+      console.error(e)
+      setError(e.message || 'Export failed. Please try again.')
+    } finally {
+      setExportingFormat(null)
+    }
   }
 
   const handleGenerateSingle = async () => {
@@ -889,6 +947,35 @@ export default function Home() {
                 <a href={videoUrl} download target="_blank" rel="noopener noreferrer" style={{
                   display: 'block', textAlign: 'center', marginTop: '10px', padding: '10px', background: 'rgba(139,92,246,0.15)', border: '1px solid rgba(139,92,246,0.3)', borderRadius: '9px', color: '#c4b5fd', fontSize: '12px', fontWeight: 700, textDecoration: 'none',
                 }}>⬇ Download Video</a>
+
+                {/* NEW: Multi-Aspect Export */}
+                <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px solid rgba(139,92,246,0.15)' }}>
+                  <div style={{ fontSize: '10px', fontWeight: 700, color: '#9080cc', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '8px' }}>
+                    Export for Other Platforms
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    {EXPORT_FORMATS.map((f) => (
+                      <button
+                        key={f.id}
+                        onClick={() => reframeVideo(videoUrl, f.ratio, `${f.label} ${f.id}`)}
+                        disabled={exportingFormat !== null}
+                        style={{
+                          display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '9px 12px', borderRadius: '8px',
+                          border: '1px solid rgba(139,92,246,0.25)', background: 'rgba(15,10,46,0.6)', color: '#c8c0ff', fontSize: '12px', fontWeight: 600,
+                          cursor: exportingFormat !== null ? 'not-allowed' : 'pointer', fontFamily: 'inherit',
+                        }}
+                      >
+                        <span>{f.label}</span>
+                        <span style={{ color: '#9080cc', fontSize: '11px' }}>
+                          {exportingFormat === `${f.label} ${f.id}` ? 'Exporting...' : `${f.id} ⬇`}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                  <p style={{ fontSize: '10px', color: '#9080cc', marginTop: '8px' }}>
+                    Re-crops your video to fit each platform — no re-generation needed. Note: switching between very different shapes (e.g. portrait ↔ landscape) will crop out part of the frame.
+                  </p>
+                </div>
               </div>
             ) : videoParts ? (
               <div style={{ padding: '12px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
