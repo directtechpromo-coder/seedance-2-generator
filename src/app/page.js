@@ -20,7 +20,10 @@ export default function Home() {
   const [videosGenerated, setVideosGenerated] = useState(0)
 
   const [sceneScript, setSceneScript] = useState('')
-  const [multiProgress, setMultiProgress] = useState([])
+  const [sceneResults, setSceneResults] = useState([]) // [{index, text, status, url, error}]
+  const sceneResultsRef = useRef([]) // mirrors sceneResults to avoid stale-closure issues on retry
+  const multiSceneSeedRef = useRef(undefined) // shared seed across scenes, persists across retries
+  const [retryingIndex, setRetryingIndex] = useState(null)
   const [stitching, setStitching] = useState(false)
   const cancelRef = useRef(false)
 
@@ -376,6 +379,67 @@ export default function Home() {
       stopPolling()
     }
   }
+  // Builds the final prompt for a scene, including Character Bible + reference image tag.
+  const buildScenePrompt = (sceneText) => {
+    const readyReferenceImages = referenceImages.filter((img) => img.url).map((img) => img.url)
+    const referenceTag = readyReferenceImages.length > 0
+      ? `@Image1 shows exactly what the product/character looks like — keep it visually identical. `
+      : ''
+    const finalPrompt = referenceTag + (characterBible.trim() ? `${characterBible.trim()}. ${sceneText}` : sceneText)
+    return { finalPrompt, readyReferenceImages }
+  }
+
+  const updateSceneResult = (index, patch) => {
+    sceneResultsRef.current = sceneResultsRef.current.map((s) => (s.index === index ? { ...s, ...patch } : s))
+    setSceneResults(sceneResultsRef.current)
+  }
+
+  // Generates (or re-generates) exactly ONE scene. Used both by the initial run and
+  // by retryScene() — same logic, same shared seed, so a retried scene still matches
+  // the rest of the video.
+  const runSingleScene = async (index, sceneText) => {
+    updateSceneResult(index, { status: 'generating', error: null })
+    const { finalPrompt, readyReferenceImages } = buildScenePrompt(sceneText)
+    const sceneDuration = audioOn ? 8 : 10
+    try {
+      const { urls, seed } = await generateOneClip(finalPrompt, {
+        seed: multiSceneSeedRef.current,
+        durationOverride: sceneDuration,
+        imageUrls: readyReferenceImages,
+      })
+      if (multiSceneSeedRef.current === undefined) multiSceneSeedRef.current = seed
+      updateSceneResult(index, { status: 'done', url: urls[urls.length - 1] })
+      return true
+    } catch (e) {
+      updateSceneResult(index, { status: 'failed', error: e.message || 'Generation failed' })
+      return false
+    }
+  }
+
+  // If every scene is now 'done' (after the initial run, or after a retry fixed the
+  // last failing scene), automatically stitch everything into the final video.
+  const tryFinalizeIfAllDone = async () => {
+    const results = sceneResultsRef.current
+    if (results.length === 0 || !results.every((s) => s.status === 'done')) return
+    const orderedUrls = [...results].sort((a, b) => a.index - b.index).map((s) => s.url)
+    try {
+      if (orderedUrls.length === 1) {
+        setVideoUrl(orderedUrls[0])
+      } else {
+        setStitching(true)
+        setStatusText('Stitching all scenes together...')
+        const finalUrl = await stitchClips(orderedUrls)
+        setVideoUrl(finalUrl)
+      }
+      setVideosGenerated((v) => v + 1)
+    } catch (e) {
+      setError(e.message || 'Stitching failed.')
+    } finally {
+      setStitching(false)
+      setStatusText('')
+    }
+  }
+
   const handleGenerateMultiScene = async () => {
     const scenes = parseScenes(sceneScript)
 
@@ -390,79 +454,40 @@ export default function Home() {
     setGenerating(true)
     setStitching(false)
     cancelRef.current = false
-    setMultiProgress(scenes.map((_, i) => ({ index: i, status: 'pending' })))
+    multiSceneSeedRef.current = undefined
 
-    const allUrls = []
-    let sharedSeed = undefined // captured from scene 1, reused for every later scene — this is
-    // now the ONLY consistency mechanism (plus Character Bible text). Frame-to-frame chaining
-    // was removed: it improved visual consistency but could force illogical results when an
-    // action changes discretely between scenes (e.g. "getting in a car" -> "driving" could
-    // produce a character appearing to drive from the back seat). For a product customers use
-    // by just pasting a prompt, correct logic matters more than perfect visual continuity —
-    // same seed + a detailed Character Bible gets consistency close enough without that risk.
+    const initial = scenes.map((text, i) => ({ index: i, text, status: 'pending', url: null, error: null }))
+    sceneResultsRef.current = initial
+    setSceneResults(initial)
 
-    try {
-      for (let i = 0; i < scenes.length; i++) {
-        if (cancelRef.current) {
-          setStatusText('Cancelled.')
-          break
-        }
-        setStatusText(`Scene ${i + 1}/${scenes.length}: generating...`)
-        setMultiProgress((prev) => prev.map((p) => (p.index === i ? { ...p, status: 'generating' } : p)))
-
-        const readyReferenceImages = referenceImages.filter((img) => img.url).map((img) => img.url)
-        const referenceTag = readyReferenceImages.length > 0
-          ? `@Image1 shows exactly what the product/character looks like — keep it visually identical. `
-          : ''
-        const finalScenePrompt = referenceTag + (characterBible.trim()
-          ? `${characterBible.trim()}. ${scenes[i]}`
-          : scenes[i])
-
-        try {
-          // FIX: force a safe, single-clip duration per scene (matches the old UI's
-          // behavior). The shared duration selector (5/10/15s) is for Single mode only —
-          // using it here with audio ON was silently auto-splitting EVERY scene into two
-          // unrelated clips, which is what caused the "low quality / no logic" videos.
-          const sceneDuration = audioOn ? 8 : 10
-          const { urls, seed } = await generateOneClip(finalScenePrompt, {
-            seed: sharedSeed,
-            durationOverride: sceneDuration,
-            imageUrls: readyReferenceImages,
-          })
-          if (sharedSeed === undefined) sharedSeed = seed // lock in the seed from scene 1
-
-          allUrls.push(...urls)
-          setMultiProgress((prev) => prev.map((p) => (p.index === i ? { ...p, status: 'done' } : p)))
-        } catch (e) {
-          setMultiProgress((prev) => prev.map((p) => (p.index === i ? { ...p, status: 'failed' } : p)))
-          throw new Error(`Scene ${i + 1} fail ho gayi: ${e.message}`)
-        }
+    for (let i = 0; i < scenes.length; i++) {
+      if (cancelRef.current) {
+        setStatusText('Cancelled.')
+        break
       }
-
-      if (allUrls.length === 0) {
-        throw new Error('Koi clip generate nahi hui.')
-      }
-
-      if (allUrls.length === 1) {
-        setVideoUrl(allUrls[0])
-      } else {
-        setStitching(true)
-        const finalUrl = await stitchClips(allUrls)
-        setStitching(false)
-        setVideoUrl(finalUrl)
-      }
-
-      setVideosGenerated((v) => v + 1)
-      setStatusText('')
-    } catch (e) {
-      console.error(e)
-      setError(e.message || 'Something went wrong.')
-      setStatusText('')
-      setStitching(false)
-    } finally {
-      setGenerating(false)
-      stopPolling()
+      setStatusText(`Scene ${i + 1}/${scenes.length}: generating...`)
+      // FIX: no longer throws/aborts on a single scene's failure — every scene gets
+      // attempted, so a customer never loses successful scenes just because one failed.
+      await runSingleScene(i, scenes[i])
     }
+
+    setStatusText('')
+    setGenerating(false)
+    stopPolling()
+    await tryFinalizeIfAllDone()
+  }
+
+  // NEW: Retry-Failed-Scene-Only. Re-generates just the one scene that failed —
+  // successful scenes are untouched, so the customer doesn't pay/wait for a full
+  // 5-scene re-run just because one scene hit a content-policy flag or timeout.
+  const retryScene = async (index) => {
+    const scene = sceneResultsRef.current.find((s) => s.index === index)
+    if (!scene) return
+    setError('')
+    setRetryingIndex(index)
+    await runSingleScene(index, scene.text)
+    setRetryingIndex(null)
+    await tryFinalizeIfAllDone()
   }
 
   const handleCancel = () => {
@@ -618,7 +643,7 @@ export default function Home() {
 
               {/* NEW: Product/Character Reference Images */}
               <div style={{ fontSize: '10px', fontWeight: 700, color: '#9080cc', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '6px' }}>
-                Product/Character Reference Images <span style={{ opacity: 0.6, textTransform: 'none', fontWeight: 400 }}>(optional — upload up to 3 photos so the AI shows the real thing instead of imagining it. Higher cost per scene when used.)</span>
+                Product/Character Reference Images <span style={{ opacity: 0.6, textTransform: 'none', fontWeight: 400 }}>(optional — upload up to 3 photos so the AI shows the real thing instead of imagining it. Higher cost + longer generation time when used. Best for physical products/characters — avoid prompts describing readable screen/app content, as AI video models struggle to render on-screen text/UI accurately.)</span>
               </div>
               <div style={{ display: 'flex', gap: '8px', marginBottom: '12px', flexWrap: 'wrap' }}>
                 {referenceImages.map((img) => (
@@ -664,17 +689,31 @@ export default function Home() {
                 </div>
               </div>
 
-              {multiProgress.length > 0 && (
-                <div style={{ marginTop: '8px', display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '140px', overflowY: 'auto' }}>
-                  {multiProgress.map((p) => (
-                    <div key={p.index} style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '5px 9px', background: 'rgba(15,10,46,0.6)', borderRadius: '6px', fontSize: '11px' }}>
-                      <span style={{
-                        color: p.status === 'done' ? '#34d399' : p.status === 'failed' ? '#f87171' : p.status === 'generating' ? '#c4b5fd' : '#9080cc',
-                      }}>
-                        {p.status === 'done' ? '✓' : p.status === 'failed' ? '✕' : p.status === 'generating' ? '◐' : '○'}
-                      </span>
-                      <span style={{ color: '#c8c0ff', flex: 1 }}>Scene {p.index + 1}</span>
-                      <span style={{ color: '#9080cc', textTransform: 'capitalize' }}>{p.status}</span>
+              {sceneResults.length > 0 && (
+                <div style={{ marginTop: '8px', display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '200px', overflowY: 'auto' }}>
+                  {sceneResults.map((s) => (
+                    <div key={s.index} style={{ display: 'flex', flexDirection: 'column', gap: '4px', padding: '5px 9px', background: 'rgba(15,10,46,0.6)', borderRadius: '6px', fontSize: '11px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <span style={{
+                          color: s.status === 'done' ? '#34d399' : s.status === 'failed' ? '#f87171' : s.status === 'generating' ? '#c4b5fd' : '#9080cc',
+                        }}>
+                          {s.status === 'done' ? '✓' : s.status === 'failed' ? '✕' : s.status === 'generating' ? '◐' : '○'}
+                        </span>
+                        <span style={{ color: '#c8c0ff', flex: 1 }}>Scene {s.index + 1}</span>
+                        <span style={{ color: '#9080cc', textTransform: 'capitalize' }}>{s.status}</span>
+                        {s.status === 'failed' && !generating && (
+                          <button
+                            onClick={() => retryScene(s.index)}
+                            disabled={retryingIndex !== null}
+                            style={{ padding: '3px 10px', borderRadius: '6px', border: '1px solid rgba(139,92,246,0.4)', background: retryingIndex === s.index ? 'rgba(139,92,246,0.1)' : 'rgba(139,92,246,0.25)', color: '#c4b5fd', fontSize: '10px', fontWeight: 700, cursor: retryingIndex !== null ? 'not-allowed' : 'pointer', fontFamily: 'inherit' }}
+                          >
+                            {retryingIndex === s.index ? 'Retrying...' : '↻ Retry'}
+                          </button>
+                        )}
+                      </div>
+                      {s.status === 'failed' && s.error && (
+                        <div style={{ color: '#f87171', fontSize: '10px', paddingLeft: '20px' }}>{s.error}</div>
+                      )}
                     </div>
                   ))}
                 </div>
