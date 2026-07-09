@@ -303,6 +303,7 @@ export default function Home() {
 
   const [exportingFormat, setExportingFormat] = useState(null)
   const [addingCaptions, setAddingCaptions] = useState(false)
+  const [showSafeZones, setShowSafeZones] = useState(false)
 
   const reframeVideo = async (sourceUrl, targetRatio, label) => {
     setExportingFormat(label)
@@ -1010,7 +1011,40 @@ export default function Home() {
 
             {videoUrl ? (
               <div style={{ padding: '12px' }}>
-                <video src={videoUrl} controls autoPlay loop style={{ width: '100%', borderRadius: '10px', background: '#000' }} />
+                <div style={{ position: 'relative', borderRadius: '10px', overflow: 'hidden' }}>
+                  <video src={videoUrl} controls autoPlay loop style={{ width: '100%', display: 'block', borderRadius: '10px', background: '#000' }} />
+                  {showSafeZones && ratio === '9:16' && (
+                    <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
+                      {/* Bottom zone — caption/username/song info in TikTok/Reels/Shorts */}
+                      <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: '18%', background: 'repeating-linear-gradient(45deg, rgba(239,68,68,0.25), rgba(239,68,68,0.25) 6px, rgba(239,68,68,0.1) 6px, rgba(239,68,68,0.1) 12px)', borderTop: '1px dashed rgba(239,68,68,0.6)' }} />
+                      {/* Right column — like/comment/share/save icons */}
+                      <div style={{ position: 'absolute', right: 0, top: '35%', bottom: '18%', width: '14%', background: 'repeating-linear-gradient(45deg, rgba(239,68,68,0.25), rgba(239,68,68,0.25) 6px, rgba(239,68,68,0.1) 6px, rgba(239,68,68,0.1) 12px)', borderLeft: '1px dashed rgba(239,68,68,0.6)' }} />
+                      {/* Top zone — status bar / notifications */}
+                      <div style={{ position: 'absolute', left: 0, right: 0, top: 0, height: '6%', background: 'repeating-linear-gradient(45deg, rgba(239,68,68,0.2), rgba(239,68,68,0.2) 6px, rgba(239,68,68,0.08) 6px, rgba(239,68,68,0.08) 12px)' }} />
+                    </div>
+                  )}
+                </div>
+
+                {/* NEW: Safe-Zone Awareness toggle */}
+                <button
+                  onClick={() => setShowSafeZones((v) => !v)}
+                  style={{
+                    display: 'block', width: '100%', textAlign: 'center', marginTop: '8px', padding: '7px', borderRadius: '8px', border: '1px solid rgba(139,92,246,0.2)',
+                    background: showSafeZones ? 'rgba(139,92,246,0.15)' : 'transparent', color: '#9080cc', fontSize: '11px', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
+                  }}
+                >
+                  {showSafeZones ? '✓ ' : '👁 '}Show Safe Zones (TikTok/Reels/Shorts UI overlap)
+                </button>
+                {showSafeZones && ratio !== '9:16' && (
+                  <p style={{ fontSize: '10px', color: '#9080cc', marginTop: '4px', textAlign: 'center' }}>
+                    Safe zone guides apply to 9:16 vertical video — switch aspect ratio to 9:16 to preview them.
+                  </p>
+                )}
+                {showSafeZones && ratio === '9:16' && (
+                  <p style={{ fontSize: '10px', color: '#9080cc', marginTop: '4px', textAlign: 'center' }}>
+                    Shaded areas may be covered by the app's own UI (captions, buttons) when posted — avoid important content there.
+                  </p>
+                )}
 
                 {/* NEW: Auto-Captions */}
                 <button
