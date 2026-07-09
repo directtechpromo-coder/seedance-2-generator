@@ -1,4 +1,6 @@
 import { NextResponse } from "next/server";
+import { getServerSession } from "next-auth/next";
+import { authOptions } from "@/lib/auth";
 import { fal } from "@fal-ai/client";
 
 const FAL_API_KEY = process.env.SEEDANCE_V2_API_KEY;
@@ -6,16 +8,17 @@ fal.config({ credentials: FAL_API_KEY });
 
 export const maxDuration = 60;
 
-// NEW: Handles video file uploads for the Reference Video feature. Accepts a
-// multipart/form-data POST with a "file" field, uploads it to FAL's storage,
-// and returns a public URL that can be used as video_url in generation requests.
-//
-// NOTE: Vercel serverless functions have a request body size limit (~4.5MB by
-// default). Large/long video files may fail to upload here — if that becomes
-// a problem, a direct-to-FAL-CDN upload flow (bypassing our own server) would
-// be needed instead.
+// Handles video/image file uploads for the Reference Video and Product/Character
+// Reference Images features. Accepts a multipart/form-data POST with a "file"
+// field, uploads it to FAL's storage, and returns a public URL.
 export async function POST(req) {
   try {
+    // NEW: require a signed-in user before allowing uploads.
+    const session = await getServerSession(authOptions);
+    if (!session?.user) {
+      return NextResponse.json({ error: "Please sign in to upload files." }, { status: 401 });
+    }
+
     if (!FAL_API_KEY) {
       return NextResponse.json({ error: "API key not configured" }, { status: 500 });
     }
