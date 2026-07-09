@@ -59,7 +59,7 @@ export default function Home() {
     if (!selectedTemplate) return
     const missing = selectedTemplate.fields.filter((f) => !templateFieldValues[f.key]?.trim())
     if (missing.length > 0) {
-      setError(`Pehle ye bhar do: ${missing.map((f) => f.label).join(', ')}`)
+      setError(`Please fill in: ${missing.map((f) => f.label).join(', ')}`)
       return
     }
     setError('')
@@ -85,7 +85,7 @@ export default function Home() {
 
     for (const file of filesToUpload) {
       if (file.size > MAX_SIZE_BYTES) {
-        setError(`${file.name} 4.5MB se badi hai. Chhoti image try karo.`)
+        setError(`${file.name} is larger than 4.5MB. Try a smaller image.`)
         continue
       }
       const placeholderId = `${Date.now()}-${Math.random()}`
@@ -158,7 +158,7 @@ export default function Home() {
             resolve(data.imageUrl)
           } else if (data.status === 'failed') {
             clearInterval(pollTimer.current)
-            reject(new Error('Generation failed'))
+            reject(new Error(data.error || 'Generation failed. Please try again.'))
           } else if (attempts > MAX_ATTEMPTS) {
             clearInterval(pollTimer.current)
             reject(new Error('Timed out waiting for video'))
@@ -257,7 +257,7 @@ export default function Home() {
 
   const handleGenerateSingle = async () => {
     if (!prompt.trim()) {
-      setError('Prompt likho pehle.')
+      setError('Please write a prompt first.')
       return
     }
 
@@ -305,7 +305,7 @@ export default function Home() {
     if (!file) return
     const MAX_SIZE_BYTES = 4.5 * 1024 * 1024 // 4.5MB — Vercel serverless request body limit
     if (file.size > MAX_SIZE_BYTES) {
-      setError(`Video 4.5MB se badi hai (${(file.size / 1024 / 1024).toFixed(1)}MB). Chhoti/compressed video try karo.`)
+      setError(`Video is larger than 4.5MB (${(file.size / 1024 / 1024).toFixed(1)}MB). Try a smaller or compressed video.`)
       if (referenceFileInputRef.current) referenceFileInputRef.current.value = ''
       return
     }
@@ -330,11 +330,11 @@ export default function Home() {
   // describes what to change. Single request, single result (no scenes, no split).
   const handleGenerateReferenceEdit = async () => {
     if (!referenceVideoUrl.trim()) {
-      setError('Reference video ka link paste karo pehle.')
+      setError('Please paste a reference video link first.')
       return
     }
     if (!referencePrompt.trim()) {
-      setError('Batao kya change karna hai (prompt likho).')
+      setError('Please describe what you want changed (write a prompt).')
       return
     }
 
@@ -444,7 +444,7 @@ export default function Home() {
     const scenes = parseScenes(sceneScript)
 
     if (scenes.length === 0) {
-      setError('Kam se kam ek scene likho (har line ek scene hai).')
+      setError('Please write at least one scene.')
       return
     }
 
@@ -502,7 +502,7 @@ export default function Home() {
     } else if (mode === 'reference') {
       handleGenerateReferenceEdit()
     } else {
-      setError('Yeh mode abhi build ho raha hai — Text to Video, Multi-Scene, ya Reference Video use karo filhaal.')
+      setError('This mode is still being built — use Text to Video, Multi-Scene, or Reference Video for now.')
     }
   }
 
@@ -842,7 +842,7 @@ export default function Home() {
               )}
             </button>
             <p style={{ textAlign: 'center', fontSize: '11px', color: '#9080cc', marginTop: '8px' }}>
-              Generation mein 1-3 minute lag sakte hain
+              Generation usually takes 1-3 minutes
             </p>
           </div>
         </div>
@@ -864,7 +864,7 @@ export default function Home() {
               </div>
             ) : videoParts ? (
               <div style={{ padding: '12px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                <p style={{ fontSize: '11px', color: '#9080cc' }}>Video 2 parts mein bani hai (auto-split). Dono parts download kar lo:</p>
+                <p style={{ fontSize: '11px', color: '#9080cc' }}>Your video was generated in 2 parts. Download both parts below:</p>
                 {videoParts.map((url, i) => (
                   <div key={i}>
                     <video src={url} controls style={{ width: '100%', borderRadius: '10px', background: '#000' }} />
@@ -885,7 +885,7 @@ export default function Home() {
                   </svg>
                 </div>
                 <div style={{ position: 'absolute', bottom: '10px', width: '80%', textAlign: 'center', fontSize: '12px', color: '#9080cc' }}>
-                  {generating ? (statusText || 'Generating...') : 'Prompt likho aur Generate dabao'}
+                  {generating ? (statusText || 'Generating...') : 'Write a prompt and click Generate'}
                 </div>
                 <div style={{ position: 'absolute', top: '8px', left: '8px', width: '12px', height: '12px', borderTop: '1.5px solid rgba(139,92,246,0.5)', borderLeft: '1.5px solid rgba(139,92,246,0.5)' }} />
                 <div style={{ position: 'absolute', top: '8px', right: '8px', width: '12px', height: '12px', borderTop: '1.5px solid rgba(139,92,246,0.5)', borderRight: '1.5px solid rgba(139,92,246,0.5)' }} />
