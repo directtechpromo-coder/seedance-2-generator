@@ -1,9 +1,17 @@
 import { NextResponse } from "next/server";
+import { getServerSession } from "next-auth/next";
+import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { classifyFalError } from "@/lib/falErrors";
 
 export async function POST(req) {
   try {
+    // NEW: require a signed-in user before allowing status checks.
+    const session = await getServerSession(authOptions);
+    if (!session?.user) {
+      return NextResponse.json({ error: "Please sign in." }, { status: 401 });
+    }
+
     const { requestId } = await req.json();
     if (!requestId) {
       return NextResponse.json({ error: "Request ID required" }, { status: 400 });
@@ -30,15 +38,9 @@ export async function POST(req) {
       if (!resultRes.ok) {
         const errText = await resultRes.text().catch(() => "");
         console.error(`[CHECK_STATUS] result fetch failed (${resultRes.status}) at ${responseUrl}: ${errText}`);
-        // FIX: this used to return {status:"processing"} here, which SILENTLY
-        // SWALLOWED real failures (like content-policy violations) — the frontend
-        // just kept polling until it eventually gave up with a generic "Timed out"
-        // message, even though FAL had already reported exactly what went wrong.
-        // Now we classify the actual error and report it as a real failure with
-        // a clear, specific message.
         const classified = classifyFalError(errText, resultRes.status);
         prisma.creation
-          .update({ where: { requestId }, data: { status: "failed" } })
+          .update({ where: { requestId }, data: { status: "failed", error: classified.message } })
           .catch((e) => console.error("[UPDATE_CREATION]", e));
         return NextResponse.json({ status: "failed", error: classified.message, errorCode: classified.code });
       }
@@ -57,7 +59,7 @@ export async function POST(req) {
       const rawMessage = typeof data.error === "string" ? data.error : JSON.stringify(data.error || data);
       const classified = classifyFalError(rawMessage, undefined);
       prisma.creation
-        .update({ where: { requestId }, data: { status: "failed" } })
+        .update({ where: { requestId }, data: { status: "failed", error: classified.message } })
         .catch((e) => console.error("[UPDATE_CREATION]", e));
       return NextResponse.json({ status: "failed", error: classified.message, errorCode: classified.code });
     }
