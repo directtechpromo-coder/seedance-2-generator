@@ -61,8 +61,10 @@ const WAN_MAX_DURATION = 10; // Wan 2.2 a14b hard limit: 161 frames / 16fps ≈ 
 // describing what to change (swap an object, change background, alter style, etc).
 // Uses ByteDance's Seedance 2.0 reference-to-video endpoint, which is purpose-built
 // for this and preserves the original motion/camera work while applying edits.
-const REFERENCE_EDIT_ENDPOINT = "https://queue.fal.run/bytedance/seedance-2.0/reference-to-video";
-const REFERENCE_EDIT_MODEL_ID = "bytedance/seedance-2.0/reference-to-video";
+// FIX: switched to the "fast" tier — same capabilities, lower latency and ~20% lower
+// cost. The standard tier was taking longer than our frontend's polling timeout allowed.
+const REFERENCE_EDIT_ENDPOINT = "https://queue.fal.run/bytedance/seedance-2.0/fast/reference-to-video";
+const REFERENCE_EDIT_MODEL_ID = "bytedance/seedance-2.0/fast/reference-to-video";
 
 function resolveModelAndMode({ generate_audio, mode }) {
   const modelKey = generate_audio ? "veo" : "wan";
