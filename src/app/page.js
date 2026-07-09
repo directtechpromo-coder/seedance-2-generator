@@ -1,6 +1,30 @@
 'use client'
 import { useState, useRef } from 'react'
 import { AD_TEMPLATES } from '@/lib/adTemplates'
+import { scanForRiskyContent } from '@/lib/contentRiskCheck'
+
+// NEW: Pre-Flight Content Check — shows a non-blocking warning when the prompt/
+// scenes contain words that commonly trigger AI video model content filters
+// (based on real failures we've seen: smoking, police chases, weapons, etc.).
+// This does NOT block generation — it's a heads-up so the customer can decide
+// whether to reword before spending credits on a scene that might fail.
+function RiskWarningBanner({ text }) {
+  const risks = scanForRiskyContent(text)
+  if (risks.length === 0) return null
+  return (
+    <div style={{ margin: '8px 0', padding: '10px 12px', background: 'rgba(251,191,36,0.08)', border: '1px solid rgba(251,191,36,0.3)', borderRadius: '8px' }}>
+      <div style={{ fontSize: '11px', fontWeight: 700, color: '#fbbf24', marginBottom: '6px' }}>⚠ Possible content risk detected</div>
+      {risks.map((r) => (
+        <div key={r.term} style={{ fontSize: '11px', color: '#fde68a', marginBottom: '4px' }}>
+          <strong>"{r.term}"</strong> ({r.category}) — {r.suggestion}
+        </div>
+      ))}
+      <div style={{ fontSize: '10px', color: '#9080cc', marginTop: '4px' }}>
+        This is a best-effort check — the AI model may still flag other content, or may accept these words. You can generate anyway.
+      </div>
+    </div>
+  )
+}
 
 export default function Home() {
   const [prompt, setPrompt] = useState('')
@@ -594,6 +618,7 @@ export default function Home() {
                   style={{ width: '100%', background: 'transparent', border: 'none', outline: 'none', color: '#fff', fontSize: '13px', lineHeight: 1.65, resize: 'none', padding: '11px 12px', minHeight: '90px', fontFamily: 'inherit' }}
                 />
               </div>
+              <RiskWarningBanner text={referencePrompt} />
             </div>
           ) : mode === 'multi' ? (
             <div style={{ padding: '12px 14px 0' }}>
@@ -689,6 +714,8 @@ export default function Home() {
                 </div>
               </div>
 
+              <RiskWarningBanner text={sceneScript} />
+
               {sceneResults.length > 0 && (
                 <div style={{ marginTop: '8px', display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '200px', overflowY: 'auto' }}>
                   {sceneResults.map((s) => (
@@ -743,6 +770,7 @@ export default function Home() {
                   <span style={{ fontSize: '11px', color: '#9080cc' }}>{prompt.length} / 500</span>
                 </div>
               </div>
+              <RiskWarningBanner text={prompt} />
             </div>
           )}
 
