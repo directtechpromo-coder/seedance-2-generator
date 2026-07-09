@@ -21,6 +21,7 @@
 // otherwise Vercel will kill the function before Clip B is even submitted.
 
 import { fal } from "@fal-ai/client"; // npm install @fal-ai/client
+import { classifyFalError } from "@/lib/falErrors";
 
 const FAL_API_KEY = process.env.SEEDANCE_V2_API_KEY; // must be set in Vercel env vars
 
@@ -61,10 +62,11 @@ const WAN_MAX_DURATION = 10; // Wan 2.2 a14b hard limit: 161 frames / 16fps ≈ 
 // describing what to change (swap an object, change background, alter style, etc).
 // Uses ByteDance's Seedance 2.0 reference-to-video endpoint, which is purpose-built
 // for this and preserves the original motion/camera work while applying edits.
-// FIX: switched to the "fast" tier — same capabilities, lower latency and ~20% lower
-// cost. The standard tier was taking longer than our frontend's polling timeout allowed.
-const REFERENCE_EDIT_ENDPOINT = "https://queue.fal.run/bytedance/seedance-2.0/fast/reference-to-video";
-const REFERENCE_EDIT_MODEL_ID = "bytedance/seedance-2.0/fast/reference-to-video";
+// Using the STANDARD tier — better fidelity/quality for reference-image accuracy
+// and screen/text rendering, at the cost of longer generation time. The frontend's
+// polling timeout has been raised to 12 minutes to accommodate this.
+const REFERENCE_EDIT_ENDPOINT = "https://queue.fal.run/bytedance/seedance-2.0/reference-to-video";
+const REFERENCE_EDIT_MODEL_ID = "bytedance/seedance-2.0/reference-to-video";
 
 function resolveModelAndMode({ generate_audio, mode }) {
   const modelKey = generate_audio ? "veo" : "wan";
@@ -143,7 +145,8 @@ async function submitClip({
 
   if (!response.ok) {
     const errorText = await response.text();
-    throw new Error(`FAL.ai queue submit failed (${response.status}) at ${endpoint}: ${errorText}`);
+    console.error(`[SUBMIT_CLIP] FAL submit failed (${response.status}) at ${endpoint}: ${errorText}`);
+    throw new Error(classifyFalError(errorText, response.status).message);
   }
 
   const data = await response.json();
@@ -184,7 +187,9 @@ async function pollClipUntilComplete({ status_url, response_url }, { maxWaitMs =
       headers: { Authorization: `Key ${FAL_API_KEY}` },
     });
     if (!statusRes.ok) {
-      throw new Error(`Status check failed (${statusRes.status}): ${await statusRes.text()}`);
+      const errText = await statusRes.text();
+      console.error(`[POLL_CLIP] status check failed (${statusRes.status}): ${errText}`);
+      throw new Error(classifyFalError(errText, statusRes.status).message);
     }
     const statusData = await statusRes.json();
 
@@ -193,18 +198,23 @@ async function pollClipUntilComplete({ status_url, response_url }, { maxWaitMs =
         headers: { Authorization: `Key ${FAL_API_KEY}` },
       });
       if (!resultRes.ok) {
-        throw new Error(`Result fetch failed (${resultRes.status}): ${await resultRes.text()}`);
+        const errText = await resultRes.text();
+        console.error(`[POLL_CLIP] result fetch failed (${resultRes.status}): ${errText}`);
+        throw new Error(classifyFalError(errText, resultRes.status).message);
       }
       const resultData = await resultRes.json();
       const videoUrl = resultData?.video?.url || resultData?.video_url;
       if (!videoUrl) {
-        throw new Error(`No video URL found in FAL result: ${JSON.stringify(resultData)}`);
+        console.error(`[POLL_CLIP] COMPLETED but no video URL found:`, JSON.stringify(resultData));
+        throw new Error("The video finished processing but no video file was returned. Please try again.");
       }
       return { videoUrl, raw: resultData };
     }
 
     if (statusData.status === "ERROR" || statusData.status === "FAILED") {
-      throw new Error(`Clip generation failed: ${JSON.stringify(statusData)}`);
+      console.error(`[POLL_CLIP] generation failed:`, JSON.stringify(statusData));
+      const rawMessage = typeof statusData.error === "string" ? statusData.error : JSON.stringify(statusData.error || statusData);
+      throw new Error(classifyFalError(rawMessage, undefined).message);
     }
 
     await new Promise((r) => setTimeout(r, intervalMs));
@@ -429,7 +439,8 @@ async function generateReferenceEdit(userId, options = {}) {
 
   if (!response.ok) {
     const errorText = await response.text();
-    throw new Error(`FAL reference-to-video submit failed (${response.status}): ${errorText}`);
+    console.error(`[REFERENCE_EDIT] FAL submit failed (${response.status}): ${errorText}`);
+    throw new Error(classifyFalError(errorText, response.status).message);
   }
 
   const data = await response.json();
