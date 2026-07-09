@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { classifyFalError } from "@/lib/falErrors";
 
 export async function POST(req) {
   try {
@@ -8,25 +9,20 @@ export async function POST(req) {
       return NextResponse.json({ error: "Request ID required" }, { status: 400 });
     }
     const apiKey = process.env.SEEDANCE_V2_API_KEY;
-
     const parts = requestId.includes("|||") ? requestId.split("|||") : [null, requestId];
     const [fullModelId, actualRequestId, providedStatusUrl, providedResponseUrl] = parts;
     const modelIdForFallback = fullModelId || "bytedance/seedance-2.0/text-to-video";
-
     let statusUrl = providedStatusUrl;
     let responseUrl = providedResponseUrl;
-
     if (!statusUrl) statusUrl = `https://queue.fal.run/${modelIdForFallback}/requests/${actualRequestId}/status`;
     if (!responseUrl) responseUrl = `https://queue.fal.run/${modelIdForFallback}/requests/${actualRequestId}`;
 
     const res = await fetch(statusUrl, { headers: { "Authorization": `Key ${apiKey}` } });
-
     if (!res.ok) {
       const errText = await res.text().catch(() => "");
       console.error(`[CHECK_STATUS] status fetch failed (${res.status}) at ${statusUrl}: ${errText}`);
       return NextResponse.json({ status: "processing" });
     }
-
     const data = await res.json();
 
     if (data.status === "COMPLETED") {
@@ -34,7 +30,17 @@ export async function POST(req) {
       if (!resultRes.ok) {
         const errText = await resultRes.text().catch(() => "");
         console.error(`[CHECK_STATUS] result fetch failed (${resultRes.status}) at ${responseUrl}: ${errText}`);
-        return NextResponse.json({ status: "processing" });
+        // FIX: this used to return {status:"processing"} here, which SILENTLY
+        // SWALLOWED real failures (like content-policy violations) — the frontend
+        // just kept polling until it eventually gave up with a generic "Timed out"
+        // message, even though FAL had already reported exactly what went wrong.
+        // Now we classify the actual error and report it as a real failure with
+        // a clear, specific message.
+        const classified = classifyFalError(errText, resultRes.status);
+        prisma.creation
+          .update({ where: { requestId }, data: { status: "failed" } })
+          .catch((e) => console.error("[UPDATE_CREATION]", e));
+        return NextResponse.json({ status: "failed", error: classified.message, errorCode: classified.code });
       }
       const result = await resultRes.json();
       const videoUrl = result?.video?.url || result?.video_url || result?.output?.url;
@@ -48,10 +54,13 @@ export async function POST(req) {
       return NextResponse.json({ status: "processing" });
     } else if (data.status === "FAILED" || data.status === "ERROR") {
       console.error(`[CHECK_STATUS] generation failed for requestId=${actualRequestId}`, JSON.stringify(data));
-      prisma.creation.update({ where: { requestId }, data: { status: "failed" } }).catch((e) => console.error("[UPDATE_CREATION]", e));
-      return NextResponse.json({ status: "failed" });
+      const rawMessage = typeof data.error === "string" ? data.error : JSON.stringify(data.error || data);
+      const classified = classifyFalError(rawMessage, undefined);
+      prisma.creation
+        .update({ where: { requestId }, data: { status: "failed" } })
+        .catch((e) => console.error("[UPDATE_CREATION]", e));
+      return NextResponse.json({ status: "failed", error: classified.message, errorCode: classified.code });
     }
-
     return NextResponse.json({ status: "processing" });
   } catch (error) {
     console.error("[CHECK_STATUS] unexpected error:", error);
