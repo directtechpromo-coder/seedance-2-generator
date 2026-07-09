@@ -467,6 +467,42 @@ async function generateReferenceEdit(userId, options = {}) {
 }
 
 /**
+ * NEW: Auto-Captions. Transcribes the audio of a generated video using FAL's
+ * hosted Whisper model, returning segment-level text + timestamps that the
+ * frontend uses to build an SRT file for burning captions into the video.
+ */
+async function transcribeAudio(videoUrl) {
+  if (!FAL_API_KEY) {
+    throw new Error("FAL_API_KEY (SEEDANCE_V2_API_KEY) is not set in environment variables");
+  }
+  if (!videoUrl) {
+    throw new Error("A video URL is required to transcribe.");
+  }
+
+  const result = await fal.subscribe("fal-ai/whisper", {
+    input: {
+      audio_url: videoUrl, // fal-ai/whisper accepts video files directly (mp4 etc.)
+      task: "transcribe",
+      chunk_level: "segment",
+    },
+  });
+
+  // Defensive extraction — FAL's exact field names can vary slightly by model
+  // version, so we try the most likely paths rather than assuming one shape.
+  const data = result?.data || result;
+  const chunks = data?.chunks || data?.segments || [];
+
+  return {
+    chunks: chunks.map((c) => ({
+      text: c.text || c.transcript || "",
+      start: c.timestamp?.[0] ?? c.start ?? 0,
+      end: c.timestamp?.[1] ?? c.end ?? 0,
+    })),
+    fullText: data?.text || "",
+  };
+}
+
+/**
  * Estimate cost in USD before calling the API. Used for UI cost previews.
  */
 function estimateCost({ generate_audio = false, resolution = "720p", duration = 5 }) {
@@ -485,7 +521,8 @@ function estimateCost({ generate_audio = false, resolution = "720p", duration = 
 export const AIService = {
   generate,
   generateReferenceEdit,
+  transcribeAudio,
   estimateCost,
 };
 
-export { generate, generateReferenceEdit, estimateCost };
+export { generate, generateReferenceEdit, transcribeAudio, estimateCost };
