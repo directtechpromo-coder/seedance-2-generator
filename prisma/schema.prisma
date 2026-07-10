@@ -2,11 +2,10 @@ generator client {
   provider      = "prisma-client-js"
   binaryTargets = ["native", "rhel-openssl-1.0.x", "rhel-openssl-3.0.x"]
 }
-
 datasource db {
   provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
-
 model Account {
   id                String  @id @default(cuid())
   userId            String
@@ -21,10 +20,8 @@ model Account {
   id_token          String?
   session_state     String?
   user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
-
   @@unique([provider, providerAccountId])
 }
-
 model Session {
   id           String   @id @default(cuid())
   sessionToken String   @unique
@@ -32,7 +29,6 @@ model Session {
   expires      DateTime
   user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
-
 model User {
   id            String     @id @default(cuid())
   name          String?
@@ -44,30 +40,29 @@ model User {
   creations     Creation[]
   sessions      Session[]
 }
-
 model Creation {
-  id          String   @id @default(cuid())
-  prompt      String
-  imageUrl    String?
-  aspectRatio String?
-  resolution  String?
-  createdAt   DateTime @default(now())
-  userId      String
-  error       String?
-  requestId   String?  @unique
-  status      String   @default("processing")
-  duration    Int?
-  quality     String?
-  audioFiles  String[]
-  videoFiles  String[]
-  inputImages String[]
-  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id           String   @id @default(cuid())
+  prompt       String
+  imageUrl     String?
+  aspectRatio  String?
+  resolution   String?
+  createdAt    DateTime @default(now())
+  userId       String
+  error        String?
+  requestId    String?  @unique
+  status       String   @default("processing")
+  duration     Int?
+  quality      String?
+  audioFiles   String[]
+  videoFiles   String[]
+  inputImages  String[]
+  creditsCost  Int?     // NEW: credits this specific clip/request costs — deducted once, on confirmed completion
+  creditsCharged Boolean @default(false) // NEW: guards against double-deducting credits if check-status is called multiple times after completion
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
-
 model VerificationToken {
   identifier String
   token      String   @unique
   expires    DateTime
-
   @@unique([identifier, token])
 }
