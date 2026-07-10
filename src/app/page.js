@@ -27,6 +27,16 @@ function RiskWarningBanner({ text }) {
   )
 }
 
+// NEW: approximate cost estimator shown in the right-hand Cost Estimator card.
+// Anchored to the same $ values as the old cost guide table (480p/5s no-audio
+// ≈ $0.20, 720p/10s no-audio ≈ $0.80, 720p/8s audio ≈ $1.20).
+function estimateCredits(resolution, duration, audioOn) {
+  const perSecond = { '480p': 0.04, '720p': 0.08, '1080p': 0.12 }[resolution] || 0.08
+  const audioMultiplier = audioOn ? 1.5 : 1
+  const cost = perSecond * duration * audioMultiplier
+  return cost.toFixed(2)
+}
+
 export default function Home() {
   const { data: session, status: sessionStatus } = useSession()
   const isSignedIn = sessionStatus === 'authenticated'
@@ -154,7 +164,6 @@ export default function Home() {
     ffmpegRef.current = ffmpeg
     return ffmpeg
   }
-
 
   // Smart scene parser. If the script uses [SCENE 1], [SCENE 2]... markers,
   // split on those. Otherwise, split on blank lines (paragraph breaks) — so a
@@ -294,11 +303,6 @@ export default function Home() {
 
   // NEW: Multi-Aspect Export. Re-crops the already-generated video into a
   // different aspect ratio using a smart center-crop (no re-generation needed).
-  // Works by comparing the source's aspect ratio to the target: if the source
-  // is proportionally wider than the target, it crops the width down (centered);
-  // if narrower, it crops the height down (centered). Note: converting between
-  // very different shapes (e.g. portrait -> landscape) will crop away a large
-  // part of the frame, since we only crop — we never stretch or add padding.
   const EXPORT_FORMATS = [
     { id: '9:16', label: 'TikTok / Reels / Shorts', ratio: 9 / 16 },
     { id: '1:1', label: 'Instagram Feed', ratio: 1 },
@@ -357,9 +361,7 @@ export default function Home() {
       .join('\n')
   }
 
-  // NEW: Transcribes the current video's audio and burns in TikTok-style
-  // captions (white text, black outline, bottom-centered). Replaces the
-  // current preview/download with the captioned version.
+  // NEW: Transcribes the current video's audio and burns in TikTok-style captions.
   const handleAddCaptions = async () => {
     if (!videoUrl) return
     setError('')
@@ -429,8 +431,6 @@ export default function Home() {
       setStatusText('Generating your video... (usually 1-3 min)')
       const { urls } = await generateOneClip(finalPrompt)
       if (urls.length > 1) {
-        // FIX: previously this just showed separate Part A / Part B downloads.
-        // Now we auto-stitch them into one final video, same as Multi-Scene mode does.
         setStatusText('Stitching parts into one final video...')
         setStitching(true)
         const finalUrl = await stitchClips(urls)
@@ -452,8 +452,7 @@ export default function Home() {
     }
   }
 
-  // NEW: Uploads a video file chosen from the user's device to FAL storage,
-  // then fills referenceVideoUrl with the resulting public URL automatically.
+  // NEW: Uploads a video file chosen from the user's device to FAL storage.
   const handleReferenceFileUpload = async (event) => {
     const file = event.target.files?.[0]
     if (!file) return
@@ -533,6 +532,7 @@ export default function Home() {
       stopPolling()
     }
   }
+
   // Builds the final prompt for a scene, including Character Bible + reference image tag.
   const buildScenePrompt = (sceneText) => {
     const readyReferenceImages = referenceImages.filter((img) => img.url).map((img) => img.url)
@@ -548,9 +548,6 @@ export default function Home() {
     setSceneResults(sceneResultsRef.current)
   }
 
-  // Generates (or re-generates) exactly ONE scene. Used both by the initial run and
-  // by retryScene() — same logic, same shared seed, so a retried scene still matches
-  // the rest of the video.
   const runSingleScene = async (index, sceneText) => {
     updateSceneResult(index, { status: 'generating', error: null })
     const { finalPrompt, readyReferenceImages } = buildScenePrompt(sceneText)
@@ -570,8 +567,6 @@ export default function Home() {
     }
   }
 
-  // If every scene is now 'done' (after the initial run, or after a retry fixed the
-  // last failing scene), automatically stitch everything into the final video.
   const tryFinalizeIfAllDone = async () => {
     const results = sceneResultsRef.current
     if (results.length === 0 || !results.every((s) => s.status === 'done')) return
@@ -620,8 +615,6 @@ export default function Home() {
         break
       }
       setStatusText(`Scene ${i + 1}/${scenes.length}: generating...`)
-      // FIX: no longer throws/aborts on a single scene's failure — every scene gets
-      // attempted, so a customer never loses successful scenes just because one failed.
       await runSingleScene(i, scenes[i])
     }
 
@@ -631,9 +624,6 @@ export default function Home() {
     await tryFinalizeIfAllDone()
   }
 
-  // NEW: Retry-Failed-Scene-Only. Re-generates just the one scene that failed —
-  // successful scenes are untouched, so the customer doesn't pay/wait for a full
-  // 5-scene re-run just because one scene hit a content-policy flag or timeout.
   const retryScene = async (index) => {
     const scene = sceneResultsRef.current.find((s) => s.index === index)
     if (!scene) return
@@ -660,338 +650,435 @@ export default function Home() {
     }
   }
 
+  const MODES = [
+    { id: 'text', title: 'Text to Video', subtitle: 'Generate from text description', icon: 'text' },
+    { id: 'reference', title: 'Reference Video', subtitle: 'Use a video to guide generation', icon: 'ref' },
+    { id: 'multi', title: 'Multi-Scene Story', subtitle: 'Create and stitch multiple scenes', icon: 'multi', badge: 'NEW' },
+  ]
+
+  const estCredits = estimateCredits(resolution, mode === 'multi' ? (audioOn ? 8 : 10) : duration, audioOn)
+
   return (
-    <main style={{ background: '#0f0a2e', minHeight: '100vh', padding: '24px 20px' }}>
+    <main style={{ background: '#0f0a2e', minHeight: '100vh', padding: '24px' }}>
+      <div style={{ maxWidth: '1360px', margin: '0 auto' }}>
 
-      <div style={{ textAlign: 'center', marginBottom: '24px' }}>
-        <h1 style={{ fontSize: '28px', fontWeight: 900, color: '#fff', letterSpacing: '-1px', marginBottom: '6px' }}>
-          Vidro <span style={{ background: 'linear-gradient(135deg,#a78bfa,#f472b6)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>AI Studio</span>
-        </h1>
-        <p style={{ fontSize: '14px', color: '#9080cc' }}>
-          Generate cinematic videos with voice — no editing skills required
-        </p>
-      </div>
-
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 420px', gap: '18px', maxWidth: '1100px', margin: '0 auto', alignItems: 'start' }}>
-
-        <div style={{ background: 'rgba(26,18,69,0.8)', border: '1px solid rgba(139,92,246,0.25)', borderRadius: '16px', overflow: 'hidden', position: 'relative' }}>
-          <div style={{ height: '2px', background: 'linear-gradient(90deg,transparent,#8b5cf6,#f472b6,transparent)' }} />
-
-          <div style={{ display: 'flex', gap: '4px', padding: '14px 14px 0' }}>
-            {[
-              { id: 'text', label: 'Text to Video' },
-              { id: 'reference', label: 'Reference Video' },
-              { id: 'multi', label: 'Multi-Scene' },
-            ].map((tab) => (
-              <button key={tab.id} onClick={() => setMode(tab.id)} style={{
-                padding: '7px 14px', fontSize: '12px', fontWeight: 600, borderRadius: '8px', border: 'none', cursor: 'pointer', fontFamily: 'inherit',
-                background: mode === tab.id ? 'rgba(139,92,246,0.2)' : 'transparent',
-                color: mode === tab.id ? '#c4b5fd' : '#9080cc',
-                outline: mode === tab.id ? '1px solid rgba(139,92,246,0.4)' : 'none',
-              }}>{tab.label}</button>
-            ))}
-          </div>
-
-          {mode !== 'reference' && (
-            <div style={{ padding: '12px 14px 0' }}>
-              <div style={{ fontSize: '10px', fontWeight: 700, color: '#9080cc', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '6px' }}>Character Bible <span style={{ opacity: 0.6, textTransform: 'none', fontWeight: 400 }}>(optional — keeps character consistent)</span></div>
-              <div style={{ background: 'rgba(15,10,46,0.8)', border: '1px solid rgba(139,92,246,0.2)', borderRadius: '10px' }}>
-                <textarea
-                  value={characterBible}
-                  onChange={(e) => setCharacterBible(e.target.value)}
-                  placeholder="e.g. A 28-year-old South Asian woman, short black hair, wearing a red hoodie, warm friendly expression..."
-                  style={{ width: '100%', background: 'transparent', border: 'none', outline: 'none', color: '#fff', fontSize: '13px', lineHeight: 1.6, resize: 'none', padding: '10px 12px', minHeight: '54px', fontFamily: 'inherit' }}
-                />
-              </div>
-            </div>
-          )}
-
-          {mode === 'reference' ? (
-            <div style={{ padding: '12px 14px 0' }}>
-              <div style={{ fontSize: '10px', fontWeight: 700, color: '#9080cc', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '6px' }}>
-                Reference Video <span style={{ opacity: 0.6, textTransform: 'none', fontWeight: 400 }}>(upload a file — max 4.5MB — or paste a direct video URL)</span>
-              </div>
-              <div style={{ display: 'flex', gap: '8px', marginBottom: '10px' }}>
-                <div style={{ flex: 1, background: 'rgba(15,10,46,0.8)', border: '1px solid rgba(139,92,246,0.2)', borderRadius: '10px' }}>
-                  <input
-                    value={referenceVideoUrl}
-                    onChange={(e) => setReferenceVideoUrl(e.target.value)}
-                    placeholder="https://... direct video link, or upload below"
-                    style={{ width: '100%', background: 'transparent', border: 'none', outline: 'none', color: '#fff', fontSize: '13px', padding: '11px 12px', fontFamily: 'inherit' }}
-                  />
-                </div>
-                <input type="file" ref={referenceFileInputRef} hidden accept="video/mp4,video/quicktime,video/webm" onChange={handleReferenceFileUpload} />
-                <button
-                  onClick={() => referenceFileInputRef.current?.click()}
-                  disabled={referenceUploading}
-                  style={{
-                    padding: '0 16px', borderRadius: '10px', border: '1px solid rgba(139,92,246,0.3)',
-                    background: referenceUploading ? 'rgba(139,92,246,0.1)' : 'rgba(139,92,246,0.15)',
-                    color: '#c4b5fd', fontSize: '12px', fontWeight: 700, cursor: referenceUploading ? 'not-allowed' : 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap',
-                  }}
-                >
-                  {referenceUploading ? 'Uploading...' : '⬆ Upload Video'}
-                </button>
-              </div>
-              {referenceVideoUrl && !referenceUploading && (
-                <div style={{ marginBottom: '10px', fontSize: '11px', color: '#34d399' }}>✓ Video ready</div>
-              )}
-
-              <div style={{ fontSize: '10px', fontWeight: 700, color: '#9080cc', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '6px' }}>
-                What do you want to change? <span style={{ opacity: 0.6, textTransform: 'none', fontWeight: 400 }}>(describe the edit — background, object, style, etc.)</span>
-              </div>
-              <div style={{ background: 'rgba(15,10,46,0.8)', border: '1px solid rgba(139,92,246,0.2)', borderRadius: '10px' }}>
-                <textarea
-                  value={referencePrompt}
-                  onChange={(e) => setReferencePrompt(e.target.value)}
-                  placeholder="e.g. Replace the background with a modern office, keep the person and their motion exactly the same"
-                  style={{ width: '100%', background: 'transparent', border: 'none', outline: 'none', color: '#fff', fontSize: '13px', lineHeight: 1.65, resize: 'none', padding: '11px 12px', minHeight: '90px', fontFamily: 'inherit' }}
-                />
-              </div>
-              <RiskWarningBanner text={referencePrompt} />
-            </div>
-          ) : mode === 'multi' ? (
-            <div style={{ padding: '12px 14px 0' }}>
-              {/* NEW: Ad Template Library */}
-              <div style={{ fontSize: '10px', fontWeight: 700, color: '#9080cc', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '6px' }}>
-                Ad Templates <span style={{ opacity: 0.6, textTransform: 'none', fontWeight: 400 }}>(optional — auto-fill your scenes from a proven ad structure)</span>
-              </div>
-              <div style={{ display: 'flex', gap: '6px', overflowX: 'auto', paddingBottom: '10px', marginBottom: selectedTemplate ? '10px' : '4px' }}>
-                {AD_TEMPLATES.map((t) => (
-                  <button
-                    key={t.id}
-                    onClick={() => handleSelectTemplate(selectedTemplateId === t.id ? null : t.id)}
-                    style={{
-                      flex: '0 0 auto', padding: '8px 12px', borderRadius: '9px', fontSize: '11px', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap',
-                      border: selectedTemplateId === t.id ? '1px solid rgba(139,92,246,0.5)' : '1px solid rgba(139,92,246,0.15)',
-                      background: selectedTemplateId === t.id ? 'rgba(139,92,246,0.25)' : 'rgba(15,10,46,0.6)',
-                      color: selectedTemplateId === t.id ? '#c4b5fd' : '#9080cc',
-                    }}
-                  >
-                    {t.name}
-                  </button>
-                ))}
-              </div>
-
-              {selectedTemplate && (
-                <div style={{ background: 'rgba(15,10,46,0.8)', border: '1px solid rgba(139,92,246,0.2)', borderRadius: '10px', padding: '12px', marginBottom: '12px' }}>
-                  <p style={{ fontSize: '11px', color: '#9080cc', marginBottom: '10px' }}>{selectedTemplate.description}</p>
-                  {selectedTemplate.fields.map((f) => (
-                    <div key={f.key} style={{ marginBottom: '8px' }}>
-                      <label style={{ fontSize: '10px', color: '#c4b5fd', fontWeight: 600, display: 'block', marginBottom: '4px' }}>{f.label}</label>
-                      <input
-                        value={templateFieldValues[f.key] || ''}
-                        onChange={(e) => handleTemplateFieldChange(f.key, e.target.value)}
-                        placeholder={f.placeholder}
-                        style={{ width: '100%', background: 'rgba(15,10,46,0.6)', border: '1px solid rgba(139,92,246,0.2)', borderRadius: '8px', color: '#fff', fontSize: '12px', padding: '8px 10px', fontFamily: 'inherit', outline: 'none' }}
-                      />
-                    </div>
-                  ))}
-                  <button
-                    onClick={applyTemplate}
-                    style={{ width: '100%', marginTop: '6px', padding: '9px', borderRadius: '8px', border: 'none', background: 'rgba(139,92,246,0.3)', color: '#fff', fontSize: '12px', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}
-                  >
-                    ✨ Fill Scenes From This Template
-                  </button>
-                </div>
-              )}
-
-              {/* NEW: Product/Character Reference Images */}
-              <div style={{ fontSize: '10px', fontWeight: 700, color: '#9080cc', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '6px' }}>
-                Product/Character Reference Images <span style={{ opacity: 0.6, textTransform: 'none', fontWeight: 400 }}>(optional — upload up to 3 photos so the AI shows the real thing instead of imagining it. Higher cost + longer generation time when used. Best for physical products/characters — avoid prompts describing readable screen/app content, as AI video models struggle to render on-screen text/UI accurately.)</span>
-              </div>
-              <div style={{ display: 'flex', gap: '8px', marginBottom: '12px', flexWrap: 'wrap' }}>
-                {referenceImages.map((img) => (
-                  <div key={img.id} style={{ position: 'relative', width: '64px', height: '64px', borderRadius: '8px', overflow: 'hidden', border: '1px solid rgba(139,92,246,0.3)', background: 'rgba(15,10,46,0.6)' }}>
-                    {img.uploading ? (
-                      <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '9px', color: '#9080cc' }}>...</div>
-                    ) : (
-                      <>
-                        <img src={img.url} alt="reference" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                        <button
-                          onClick={() => removeReferenceImage(img.id)}
-                          style={{ position: 'absolute', top: '2px', right: '2px', width: '16px', height: '16px', borderRadius: '50%', border: 'none', background: 'rgba(0,0,0,0.6)', color: '#fff', fontSize: '10px', cursor: 'pointer', lineHeight: 1 }}
-                        >✕</button>
-                      </>
-                    )}
-                  </div>
-                ))}
-                {referenceImages.length < 3 && (
-                  <>
-                    <input type="file" ref={referenceImageInputRef} hidden accept="image/png,image/jpeg,image/webp" multiple onChange={handleReferenceImageUpload} />
-                    <button
-                      onClick={() => referenceImageInputRef.current?.click()}
-                      style={{ width: '64px', height: '64px', borderRadius: '8px', border: '1px dashed rgba(139,92,246,0.4)', background: 'rgba(15,10,46,0.4)', color: '#9080cc', fontSize: '20px', cursor: 'pointer' }}
-                    >+</button>
-                  </>
+        {/* Mode selector — big cards */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px', marginBottom: '18px' }}>
+          {MODES.map((m) => (
+            <button
+              key={m.id}
+              onClick={() => setMode(m.id)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: '12px', textAlign: 'left', cursor: 'pointer', fontFamily: 'inherit',
+                padding: '16px 18px', borderRadius: '14px',
+                background: mode === m.id ? 'rgba(139,92,246,0.12)' : 'rgba(26,18,69,0.6)',
+                border: mode === m.id ? '1px solid rgba(139,92,246,0.6)' : '1px solid rgba(139,92,246,0.15)',
+              }}
+            >
+              <div style={{
+                width: '38px', height: '38px', borderRadius: '10px', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                background: m.id === 'text' ? 'rgba(139,92,246,0.2)' : m.id === 'reference' ? 'rgba(34,211,238,0.15)' : 'rgba(52,211,153,0.15)',
+              }}>
+                {m.icon === 'text' && (
+                  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#c4b5fd" strokeWidth="1.8"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+                )}
+                {m.icon === 'ref' && (
+                  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#67e8f9" strokeWidth="1.8"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
+                )}
+                {m.icon === 'multi' && (
+                  <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="#6ee7b7" strokeWidth="1.8"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
                 )}
               </div>
-
-              <div style={{ fontSize: '10px', fontWeight: 700, color: '#9080cc', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '6px' }}>
-                Scenes <span style={{ opacity: 0.6, textTransform: 'none', fontWeight: 400 }}>(use [SCENE 1], [SCENE 2]... tags, OR separate scenes with a blank line — each scene is a fixed {audioOn ? '8s' : '10s'} clip)</span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '7px' }}>
+                  <span style={{ fontSize: '13.5px', fontWeight: 700, color: '#fff' }}>{m.title}</span>
+                  {m.badge && (
+                    <span style={{ fontSize: '9px', fontWeight: 800, color: '#0f0a2e', background: '#34d399', padding: '1.5px 6px', borderRadius: '5px' }}>{m.badge}</span>
+                  )}
+                </div>
+                <div style={{ fontSize: '11.5px', color: '#9080cc' }}>{m.subtitle}</div>
               </div>
-              <div style={{ background: 'rgba(15,10,46,0.8)', border: '1px solid rgba(139,92,246,0.2)', borderRadius: '10px' }}>
-                <textarea
-                  value={sceneScript}
-                  onChange={(e) => setSceneScript(e.target.value)}
-                  placeholder={'[SCENE 1]\nWoman walks into a bright kitchen, smiling, holding a product\n\n[SCENE 2]\nClose-up of product on the counter, soft morning light\n\n[SCENE 3]\nWoman talks to camera, enthusiastic expression'}
-                  style={{ width: '100%', background: 'transparent', border: 'none', outline: 'none', color: '#fff', fontSize: '13px', lineHeight: 1.65, resize: 'none', padding: '11px 12px', minHeight: '140px', fontFamily: 'inherit' }}
-                />
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', borderTop: '1px solid rgba(139,92,246,0.15)' }}>
-                  <span style={{ fontSize: '11px', color: '#9080cc' }}>
-                    {parseScenes(sceneScript).length} scenes · ~{parseScenes(sceneScript).length * duration}s total
-                  </span>
+            </button>
+          ))}
+        </div>
+
+        {/* Main 3-column layout: Prompt form | Preview | Settings */}
+        <div style={{ display: 'grid', gridTemplateColumns: '360px 1fr 320px', gap: '16px', alignItems: 'start' }}>
+
+          {/* LEFT: Prompt / Character Bible / Scenes */}
+          <div style={{ background: 'rgba(26,18,69,0.8)', border: '1px solid rgba(139,92,246,0.25)', borderRadius: '16px', overflow: 'hidden' }}>
+            <div style={{ height: '2px', background: 'linear-gradient(90deg,transparent,#8b5cf6,#f472b6,transparent)' }} />
+
+            {mode !== 'reference' && (
+              <div style={{ padding: '14px 14px 0' }}>
+                <div style={{ fontSize: '10px', fontWeight: 700, color: '#9080cc', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '6px' }}>Character Bible <span style={{ opacity: 0.6, textTransform: 'none', fontWeight: 400 }}>(optional)</span></div>
+                <div style={{ background: 'rgba(15,10,46,0.8)', border: '1px solid rgba(139,92,246,0.2)', borderRadius: '10px' }}>
+                  <textarea
+                    value={characterBible}
+                    onChange={(e) => setCharacterBible(e.target.value)}
+                    placeholder="e.g. A 28-year-old South Asian woman, short black hair, red hoodie..."
+                    style={{ width: '100%', background: 'transparent', border: 'none', outline: 'none', color: '#fff', fontSize: '13px', lineHeight: 1.6, resize: 'none', padding: '10px 12px', minHeight: '54px', fontFamily: 'inherit' }}
+                  />
                 </div>
               </div>
+            )}
 
-              <RiskWarningBanner text={sceneScript} />
+            {mode === 'reference' ? (
+              <div style={{ padding: '14px 14px 0' }}>
+                <div style={{ fontSize: '10px', fontWeight: 700, color: '#9080cc', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '6px' }}>
+                  Reference Video <span style={{ opacity: 0.6, textTransform: 'none', fontWeight: 400 }}>(max 4.5MB, or paste a URL)</span>
+                </div>
+                <div style={{ display: 'flex', gap: '8px', marginBottom: '10px' }}>
+                  <div style={{ flex: 1, background: 'rgba(15,10,46,0.8)', border: '1px solid rgba(139,92,246,0.2)', borderRadius: '10px' }}>
+                    <input
+                      value={referenceVideoUrl}
+                      onChange={(e) => setReferenceVideoUrl(e.target.value)}
+                      placeholder="https://... or upload below"
+                      style={{ width: '100%', background: 'transparent', border: 'none', outline: 'none', color: '#fff', fontSize: '13px', padding: '11px 12px', fontFamily: 'inherit' }}
+                    />
+                  </div>
+                  <input type="file" ref={referenceFileInputRef} hidden accept="video/mp4,video/quicktime,video/webm" onChange={handleReferenceFileUpload} />
+                  <button
+                    onClick={() => referenceFileInputRef.current?.click()}
+                    disabled={referenceUploading}
+                    style={{ padding: '0 14px', borderRadius: '10px', border: '1px solid rgba(139,92,246,0.3)', background: referenceUploading ? 'rgba(139,92,246,0.1)' : 'rgba(139,92,246,0.15)', color: '#c4b5fd', fontSize: '11px', fontWeight: 700, cursor: referenceUploading ? 'not-allowed' : 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}
+                  >
+                    {referenceUploading ? '...' : '⬆ Upload'}
+                  </button>
+                </div>
+                {referenceVideoUrl && !referenceUploading && (
+                  <div style={{ marginBottom: '10px', fontSize: '11px', color: '#34d399' }}>✓ Video ready</div>
+                )}
 
-              {sceneResults.length > 0 && (
-                <div style={{ marginTop: '8px', display: 'flex', flexDirection: 'column', gap: '4px', maxHeight: '200px', overflowY: 'auto' }}>
-                  {sceneResults.map((s) => (
-                    <div key={s.index} style={{ display: 'flex', flexDirection: 'column', gap: '4px', padding: '5px 9px', background: 'rgba(15,10,46,0.6)', borderRadius: '6px', fontSize: '11px' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <span style={{
-                          color: s.status === 'done' ? '#34d399' : s.status === 'failed' ? '#f87171' : s.status === 'generating' ? '#c4b5fd' : '#9080cc',
-                        }}>
-                          {s.status === 'done' ? '✓' : s.status === 'failed' ? '✕' : s.status === 'generating' ? '◐' : '○'}
-                        </span>
-                        <span style={{ color: '#c8c0ff', flex: 1 }}>Scene {s.index + 1}</span>
-                        <span style={{ color: '#9080cc', textTransform: 'capitalize' }}>{s.status}</span>
-                        {s.status === 'failed' && !generating && (
-                          <button
-                            onClick={() => retryScene(s.index)}
-                            disabled={retryingIndex !== null}
-                            style={{ padding: '3px 10px', borderRadius: '6px', border: '1px solid rgba(139,92,246,0.4)', background: retryingIndex === s.index ? 'rgba(139,92,246,0.1)' : 'rgba(139,92,246,0.25)', color: '#c4b5fd', fontSize: '10px', fontWeight: 700, cursor: retryingIndex !== null ? 'not-allowed' : 'pointer', fontFamily: 'inherit' }}
-                          >
-                            {retryingIndex === s.index ? 'Retrying...' : '↻ Retry'}
-                          </button>
-                        )}
+                <div style={{ fontSize: '10px', fontWeight: 700, color: '#9080cc', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '6px' }}>
+                  What do you want to change?
+                </div>
+                <div style={{ background: 'rgba(15,10,46,0.8)', border: '1px solid rgba(139,92,246,0.2)', borderRadius: '10px' }}>
+                  <textarea
+                    value={referencePrompt}
+                    onChange={(e) => setReferencePrompt(e.target.value)}
+                    placeholder="e.g. Replace the background with a modern office..."
+                    style={{ width: '100%', background: 'transparent', border: 'none', outline: 'none', color: '#fff', fontSize: '13px', lineHeight: 1.65, resize: 'none', padding: '11px 12px', minHeight: '90px', fontFamily: 'inherit' }}
+                  />
+                </div>
+                <RiskWarningBanner text={referencePrompt} />
+              </div>
+            ) : mode === 'multi' ? (
+              <div style={{ padding: '14px 14px 0' }}>
+                <div style={{ fontSize: '10px', fontWeight: 700, color: '#9080cc', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '6px' }}>
+                  Ad Templates <span style={{ opacity: 0.6, textTransform: 'none', fontWeight: 400 }}>(optional)</span>
+                </div>
+                <div style={{ display: 'flex', gap: '6px', overflowX: 'auto', paddingBottom: '10px', marginBottom: selectedTemplate ? '10px' : '4px' }}>
+                  {AD_TEMPLATES.map((t) => (
+                    <button
+                      key={t.id}
+                      onClick={() => handleSelectTemplate(selectedTemplateId === t.id ? null : t.id)}
+                      style={{
+                        flex: '0 0 auto', padding: '8px 12px', borderRadius: '9px', fontSize: '11px', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap',
+                        border: selectedTemplateId === t.id ? '1px solid rgba(139,92,246,0.5)' : '1px solid rgba(139,92,246,0.15)',
+                        background: selectedTemplateId === t.id ? 'rgba(139,92,246,0.25)' : 'rgba(15,10,46,0.6)',
+                        color: selectedTemplateId === t.id ? '#c4b5fd' : '#9080cc',
+                      }}
+                    >
+                      {t.name}
+                    </button>
+                  ))}
+                </div>
+
+                {selectedTemplate && (
+                  <div style={{ background: 'rgba(15,10,46,0.8)', border: '1px solid rgba(139,92,246,0.2)', borderRadius: '10px', padding: '12px', marginBottom: '12px' }}>
+                    <p style={{ fontSize: '11px', color: '#9080cc', marginBottom: '10px' }}>{selectedTemplate.description}</p>
+                    {selectedTemplate.fields.map((f) => (
+                      <div key={f.key} style={{ marginBottom: '8px' }}>
+                        <label style={{ fontSize: '10px', color: '#c4b5fd', fontWeight: 600, display: 'block', marginBottom: '4px' }}>{f.label}</label>
+                        <input
+                          value={templateFieldValues[f.key] || ''}
+                          onChange={(e) => handleTemplateFieldChange(f.key, e.target.value)}
+                          placeholder={f.placeholder}
+                          style={{ width: '100%', background: 'rgba(15,10,46,0.6)', border: '1px solid rgba(139,92,246,0.2)', borderRadius: '8px', color: '#fff', fontSize: '12px', padding: '8px 10px', fontFamily: 'inherit', outline: 'none' }}
+                        />
                       </div>
-                      {s.status === 'failed' && s.error && (
-                        <div style={{ color: '#f87171', fontSize: '10px', paddingLeft: '20px' }}>{s.error}</div>
+                    ))}
+                    <button
+                      onClick={applyTemplate}
+                      style={{ width: '100%', marginTop: '6px', padding: '9px', borderRadius: '8px', border: 'none', background: 'rgba(139,92,246,0.3)', color: '#fff', fontSize: '12px', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}
+                    >
+                      ✨ Fill Scenes From This Template
+                    </button>
+                  </div>
+                )}
+
+                <div style={{ fontSize: '10px', fontWeight: 700, color: '#9080cc', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '6px' }}>
+                  Reference Images <span style={{ opacity: 0.6, textTransform: 'none', fontWeight: 400 }}>(optional, up to 3)</span>
+                </div>
+                <div style={{ display: 'flex', gap: '8px', marginBottom: '12px', flexWrap: 'wrap' }}>
+                  {referenceImages.map((img) => (
+                    <div key={img.id} style={{ position: 'relative', width: '56px', height: '56px', borderRadius: '8px', overflow: 'hidden', border: '1px solid rgba(139,92,246,0.3)', background: 'rgba(15,10,46,0.6)' }}>
+                      {img.uploading ? (
+                        <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '9px', color: '#9080cc' }}>...</div>
+                      ) : (
+                        <>
+                          <img src={img.url} alt="reference" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                          <button onClick={() => removeReferenceImage(img.id)} style={{ position: 'absolute', top: '2px', right: '2px', width: '16px', height: '16px', borderRadius: '50%', border: 'none', background: 'rgba(0,0,0,0.6)', color: '#fff', fontSize: '10px', cursor: 'pointer', lineHeight: 1 }}>✕</button>
+                        </>
                       )}
                     </div>
                   ))}
+                  {referenceImages.length < 3 && (
+                    <>
+                      <input type="file" ref={referenceImageInputRef} hidden accept="image/png,image/jpeg,image/webp" multiple onChange={handleReferenceImageUpload} />
+                      <button onClick={() => referenceImageInputRef.current?.click()} style={{ width: '56px', height: '56px', borderRadius: '8px', border: '1px dashed rgba(139,92,246,0.4)', background: 'rgba(15,10,46,0.4)', color: '#9080cc', fontSize: '18px', cursor: 'pointer' }}>+</button>
+                    </>
+                  )}
                 </div>
-              )}
 
-              {generating && (
-                <button
-                  onClick={handleCancel}
-                  style={{ marginTop: '8px', width: '100%', padding: '8px', background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '8px', color: '#fca5a5', fontSize: '12px', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}
-                >
-                  Cancel remaining scenes
-                </button>
-              )}
-            </div>
-          ) : (
-            <div style={{ padding: '12px 14px 0' }}>
-              <div style={{ fontSize: '10px', fontWeight: 700, color: '#9080cc', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '6px' }}>Prompt</div>
-              <div style={{ background: 'rgba(15,10,46,0.8)', border: '1px solid rgba(139,92,246,0.2)', borderRadius: '10px', transition: 'border-color .2s' }}>
-                <textarea
-                  value={prompt}
-                  onChange={(e) => setPrompt(e.target.value)}
-                  placeholder="Describe your video... e.g. A cinematic drone shot over a neon-lit city at night, rain falling on wet streets, slow pan with bokeh lights..."
-                  style={{ width: '100%', background: 'transparent', border: 'none', outline: 'none', color: '#fff', fontSize: '13px', lineHeight: 1.65, resize: 'none', padding: '11px 12px', minHeight: '90px', fontFamily: 'inherit' }}
+                <div style={{ fontSize: '10px', fontWeight: 700, color: '#9080cc', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '6px' }}>
+                  Scenes <span style={{ opacity: 0.6, textTransform: 'none', fontWeight: 400 }}>(each is {audioOn ? '8s' : '10s'})</span>
+                </div>
+                <div style={{ background: 'rgba(15,10,46,0.8)', border: '1px solid rgba(139,92,246,0.2)', borderRadius: '10px' }}>
+                  <textarea
+                    value={sceneScript}
+                    onChange={(e) => setSceneScript(e.target.value)}
+                    placeholder={'[SCENE 1]\nWoman walks into a bright kitchen...\n\n[SCENE 2]\nClose-up of product on the counter...'}
+                    style={{ width: '100%', background: 'transparent', border: 'none', outline: 'none', color: '#fff', fontSize: '13px', lineHeight: 1.65, resize: 'none', padding: '11px 12px', minHeight: '120px', fontFamily: 'inherit' }}
+                  />
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', borderTop: '1px solid rgba(139,92,246,0.15)' }}>
+                    <span style={{ fontSize: '11px', color: '#9080cc' }}>
+                      {parseScenes(sceneScript).length} scenes · ~{parseScenes(sceneScript).length * duration}s total
+                    </span>
+                  </div>
+                </div>
+
+                <RiskWarningBanner text={sceneScript} />
+
+                {generating && (
+                  <button onClick={handleCancel} style={{ marginTop: '8px', width: '100%', padding: '8px', background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '8px', color: '#fca5a5', fontSize: '12px', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>
+                    Cancel remaining scenes
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div style={{ padding: '14px 14px 0' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
+                  <span style={{ fontSize: '10px', fontWeight: 700, color: '#9080cc', textTransform: 'uppercase', letterSpacing: '1px' }}>Prompt</span>
+                  <span style={{ fontSize: '10px', color: '#9080cc' }}>Tips</span>
+                </div>
+                <div style={{ background: 'rgba(15,10,46,0.8)', border: '1px solid rgba(139,92,246,0.2)', borderRadius: '10px' }}>
+                  <textarea
+                    value={prompt}
+                    onChange={(e) => setPrompt(e.target.value)}
+                    placeholder="Describe your video... e.g. A cinematic drone shot over a neon-lit city at night, rain falling on wet streets, slow pan with bokeh lights..."
+                    style={{ width: '100%', background: 'transparent', border: 'none', outline: 'none', color: '#fff', fontSize: '13px', lineHeight: 1.65, resize: 'none', padding: '11px 12px', minHeight: '150px', fontFamily: 'inherit' }}
+                  />
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', padding: '8px 12px', borderTop: '1px solid rgba(139,92,246,0.15)' }}>
+                    <span style={{ fontSize: '11px', color: '#9080cc' }}>{prompt.length} / 500</span>
+                  </div>
+                </div>
+                <RiskWarningBanner text={prompt} />
+              </div>
+            )}
+
+            <div style={{ padding: '8px 14px 14px' }}>
+              <div style={{ background: 'rgba(239,68,68,0.05)', border: '1px solid rgba(239,68,68,0.15)', borderRadius: '8px', padding: '8px 11px', display: 'flex', alignItems: 'center', gap: '7px' }}>
+                <span style={{ fontSize: '13px', color: 'rgba(239,68,68,0.6)' }}>⊘</span>
+                <input
+                  value={negativePrompt}
+                  onChange={(e) => setNegativePrompt(e.target.value)}
+                  placeholder="Negative prompt: blurry, distorted, watermark..."
+                  style={{ background: 'transparent', border: 'none', outline: 'none', color: '#fff', fontSize: '12px', flex: 1, fontFamily: 'inherit' }}
                 />
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', borderTop: '1px solid rgba(139,92,246,0.15)' }}>
-                  <span style={{ fontSize: '11px', color: '#9080cc' }}>Text-to-Video is live now</span>
-                  <span style={{ fontSize: '11px', color: '#9080cc' }}>{prompt.length} / 500</span>
+              </div>
+            </div>
+          </div>
+
+          {/* CENTER: Preview */}
+          <div style={{ background: 'rgba(26,18,69,0.8)', border: '1px solid rgba(139,92,246,0.25)', borderRadius: '16px', overflow: 'hidden' }}>
+            <div style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid rgba(139,92,246,0.15)' }}>
+              <span style={{ fontSize: '12px', fontWeight: 700, color: '#fff' }}>▷ Preview</span>
+              {videoUrl && <span style={{ fontSize: '10px', color: '#9080cc' }}>Ready</span>}
+            </div>
+
+            {videoUrl ? (
+              <div style={{ padding: '14px' }}>
+                <div style={{ position: 'relative', borderRadius: '10px', overflow: 'hidden' }}>
+                  <video src={videoUrl} controls autoPlay loop style={{ width: '100%', display: 'block', borderRadius: '10px', background: '#000' }} />
+                  {showSafeZones && ratio === '9:16' && (
+                    <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
+                      <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: '18%', background: 'repeating-linear-gradient(45deg, rgba(239,68,68,0.25), rgba(239,68,68,0.25) 6px, rgba(239,68,68,0.1) 6px, rgba(239,68,68,0.1) 12px)', borderTop: '1px dashed rgba(239,68,68,0.6)' }} />
+                      <div style={{ position: 'absolute', right: 0, top: '35%', bottom: '18%', width: '14%', background: 'repeating-linear-gradient(45deg, rgba(239,68,68,0.25), rgba(239,68,68,0.25) 6px, rgba(239,68,68,0.1) 6px, rgba(239,68,68,0.1) 12px)', borderLeft: '1px dashed rgba(239,68,68,0.6)' }} />
+                      <div style={{ position: 'absolute', left: 0, right: 0, top: 0, height: '6%', background: 'repeating-linear-gradient(45deg, rgba(239,68,68,0.2), rgba(239,68,68,0.2) 6px, rgba(239,68,68,0.08) 6px, rgba(239,68,68,0.08) 12px)' }} />
+                    </div>
+                  )}
+                </div>
+
+                <div style={{ display: 'flex', gap: '8px', marginTop: '10px', flexWrap: 'wrap' }}>
+                  <button onClick={() => setShowSafeZones((v) => !v)} style={{ flex: '1 1 160px', padding: '9px', borderRadius: '8px', border: '1px solid rgba(139,92,246,0.2)', background: showSafeZones ? 'rgba(139,92,246,0.15)' : 'transparent', color: '#9080cc', fontSize: '11px', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit' }}>
+                    {showSafeZones ? '✓ ' : '👁 '}Safe Zones
+                  </button>
+                  <button onClick={handleAddCaptions} disabled={addingCaptions || exportingFormat !== null} style={{ flex: '1 1 160px', padding: '9px', borderRadius: '8px', border: '1px solid rgba(139,92,246,0.3)', background: addingCaptions ? 'rgba(139,92,246,0.08)' : 'rgba(139,92,246,0.15)', color: '#c4b5fd', fontSize: '11px', fontWeight: 700, cursor: addingCaptions ? 'not-allowed' : 'pointer', fontFamily: 'inherit' }}>
+                    {addingCaptions ? (statusText || 'Adding...') : '💬 Captions'}
+                  </button>
+                  <a href={videoUrl} download target="_blank" rel="noopener noreferrer" style={{ flex: '1 1 160px', textAlign: 'center', padding: '9px', background: 'rgba(139,92,246,0.15)', border: '1px solid rgba(139,92,246,0.3)', borderRadius: '8px', color: '#c4b5fd', fontSize: '11px', fontWeight: 700, textDecoration: 'none' }}>⬇ Download</a>
+                </div>
+                {showSafeZones && ratio !== '9:16' && (
+                  <p style={{ fontSize: '10px', color: '#9080cc', marginTop: '6px' }}>Safe zone guides apply to 9:16 vertical video.</p>
+                )}
+
+                <div style={{ marginTop: '14px', paddingTop: '14px', borderTop: '1px solid rgba(139,92,246,0.15)' }}>
+                  <div style={{ fontSize: '10px', fontWeight: 700, color: '#9080cc', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '8px' }}>
+                    Export for Other Platforms
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                    {EXPORT_FORMATS.map((f) => (
+                      <button key={f.id} onClick={() => reframeVideo(videoUrl, f.ratio, `${f.label} ${f.id}`)} disabled={exportingFormat !== null || addingCaptions} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '9px 12px', borderRadius: '8px', border: '1px solid rgba(139,92,246,0.25)', background: 'rgba(15,10,46,0.6)', color: '#c8c0ff', fontSize: '12px', fontWeight: 600, cursor: exportingFormat !== null ? 'not-allowed' : 'pointer', fontFamily: 'inherit' }}>
+                        <span>{f.label}</span>
+                        <span style={{ color: '#9080cc', fontSize: '11px' }}>{exportingFormat === `${f.label} ${f.id}` ? 'Exporting...' : `${f.id} ⬇`}</span>
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
-              <RiskWarningBanner text={prompt} />
-            </div>
-          )}
+            ) : videoParts ? (
+              <div style={{ padding: '14px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                <p style={{ fontSize: '11px', color: '#9080cc' }}>Your video was generated in 2 parts:</p>
+                {videoParts.map((url, i) => (
+                  <div key={i}>
+                    <video src={url} controls style={{ width: '100%', borderRadius: '10px', background: '#000' }} />
+                    <a href={url} download target="_blank" rel="noopener noreferrer" style={{ display: 'block', textAlign: 'center', marginTop: '6px', padding: '8px', background: 'rgba(139,92,246,0.15)', border: '1px solid rgba(139,92,246,0.3)', borderRadius: '9px', color: '#c4b5fd', fontSize: '11px', fontWeight: 700, textDecoration: 'none' }}>⬇ Download Part {i === 0 ? 'A' : 'B'}</a>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div style={{ height: '340px', background: 'linear-gradient(145deg,#07051a,#120d35)', position: 'relative', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid rgba(139,92,246,0.1)', margin: '14px', borderRadius: '10px' }}>
+                {generating && (
+                  <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: '1px', background: 'linear-gradient(90deg,transparent,rgba(139,92,246,0.8),rgba(244,114,182,0.5),transparent)', animation: 'scan 3s linear infinite' }} />
+                )}
+                <div style={{ width: '48px', height: '48px', borderRadius: '12px', background: 'rgba(139,92,246,0.15)', border: '1px solid rgba(139,92,246,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#c4b5fd" strokeWidth="1.5"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
+                </div>
+                <div style={{ position: 'absolute', bottom: '14px', width: '80%', textAlign: 'center', fontSize: '12px', color: '#9080cc' }}>
+                  {generating ? (statusText || 'Generating...') : 'Write a prompt and click Generate'}
+                </div>
+              </div>
+            )}
 
-          <div style={{ padding: '8px 14px 0' }}>
-            <div style={{ background: 'rgba(239,68,68,0.05)', border: '1px solid rgba(239,68,68,0.15)', borderRadius: '8px', padding: '8px 11px', display: 'flex', alignItems: 'center', gap: '7px' }}>
-              <span style={{ fontSize: '13px', color: 'rgba(239,68,68,0.6)' }}>⊘</span>
-              <input
-                value={negativePrompt}
-                onChange={(e) => setNegativePrompt(e.target.value)}
-                placeholder="Negative prompt: blurry, distorted, watermark..."
-                style={{ background: 'transparent', border: 'none', outline: 'none', color: '#fff', fontSize: '12px', flex: 1, fontFamily: 'inherit' }}
-              />
-            </div>
+            {/* Scene thumbnails strip — Multi-Scene mode only */}
+            {mode === 'multi' && sceneResults.length > 0 && (
+              <div style={{ padding: '0 14px 14px', display: 'flex', gap: '8px', overflowX: 'auto' }}>
+                {sceneResults.map((s) => (
+                  <div key={s.index} style={{ flex: '0 0 auto', width: '96px' }}>
+                    <div style={{
+                      width: '96px', height: '64px', borderRadius: '8px', overflow: 'hidden', position: 'relative',
+                      border: s.status === 'done' ? '1px solid rgba(52,211,153,0.5)' : s.status === 'failed' ? '1px solid rgba(248,113,113,0.5)' : '1px solid rgba(139,92,246,0.25)',
+                      background: '#07051a', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    }}>
+                      {s.url ? (
+                        <video src={s.url} style={{ width: '100%', height: '100%', objectFit: 'cover' }} muted />
+                      ) : (
+                        <span style={{ fontSize: '16px' }}>
+                          {s.status === 'generating' ? '◐' : s.status === 'failed' ? '✕' : '○'}
+                        </span>
+                      )}
+                    </div>
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '4px' }}>
+                      <span style={{ fontSize: '10px', color: '#9080cc' }}>Scene {s.index + 1}</span>
+                      {s.status === 'failed' && !generating && (
+                        <button onClick={() => retryScene(s.index)} disabled={retryingIndex !== null} style={{ fontSize: '9px', color: '#c4b5fd', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit' }}>
+                          {retryingIndex === s.index ? '...' : '↻ Retry'}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {error && (
+              <div style={{ margin: '0 14px 14px', padding: '9px 12px', background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '8px', color: '#fca5a5', fontSize: '12px' }}>
+                {error}
+              </div>
+            )}
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '9px', padding: '10px 14px 0' }}>
-            <div style={{ background: 'rgba(15,10,46,0.6)', border: '1px solid rgba(139,92,246,0.15)', borderRadius: '9px', padding: '9px 11px' }}>
-              <div style={{ fontSize: '10px', fontWeight: 700, color: '#9080cc', textTransform: 'uppercase', letterSpacing: '.7px', marginBottom: '6px' }}>Resolution <span style={{ opacity: 0.6, textTransform: 'none', fontWeight: 400 }}>(720p+ recommended for Multi-Scene)</span></div>
-              <div style={{ display: 'flex', gap: '3px' }}>
-                {['480p', '720p', '1080p'].map((r) => (
-                  <button key={r} onClick={() => setResolution(r)} style={{
-                    flex: 1, padding: '5px 3px', borderRadius: '6px', fontSize: '11px', fontWeight: 600, textAlign: 'center', cursor: 'pointer', border: 'none', fontFamily: 'inherit',
-                    background: resolution === r ? 'rgba(139,92,246,0.2)' : 'transparent',
-                    color: resolution === r ? '#c4b5fd' : '#9080cc',
-                    outline: resolution === r ? '1px solid rgba(139,92,246,0.35)' : '1px solid transparent',
-                  }}>{r}</button>
-                ))}
+          {/* RIGHT: Video Settings + Cost Estimator + Generate */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+            <div style={{ background: 'rgba(26,18,69,0.8)', border: '1px solid rgba(139,92,246,0.25)', borderRadius: '16px', padding: '16px' }}>
+              <div style={{ fontSize: '13px', fontWeight: 700, color: '#fff', marginBottom: '14px' }}>Video Settings</div>
+
+              <div style={{ marginBottom: '14px' }}>
+                <div style={{ fontSize: '10px', fontWeight: 700, color: '#9080cc', textTransform: 'uppercase', letterSpacing: '.7px', marginBottom: '7px' }}>Resolution</div>
+                <div style={{ display: 'flex', gap: '5px' }}>
+                  {['480p', '720p', '1080p'].map((r) => (
+                    <button key={r} onClick={() => setResolution(r)} style={{ flex: 1, padding: '9px 3px', borderRadius: '8px', fontSize: '11.5px', fontWeight: 600, cursor: 'pointer', border: resolution === r ? '1px solid rgba(139,92,246,0.5)' : '1px solid rgba(139,92,246,0.15)', background: resolution === r ? 'rgba(139,92,246,0.2)' : 'rgba(15,10,46,0.5)', color: resolution === r ? '#c4b5fd' : '#9080cc', fontFamily: 'inherit' }}>
+                      {r}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div style={{ marginBottom: '14px' }}>
+                <div style={{ fontSize: '10px', fontWeight: 700, color: '#9080cc', textTransform: 'uppercase', letterSpacing: '.7px', marginBottom: '7px' }}>Duration</div>
+                <div style={{ display: 'flex', gap: '5px' }}>
+                  {[5, 10, 15].map((d) => (
+                    <button key={d} onClick={() => setDuration(d)} style={{ flex: 1, padding: '9px 3px', borderRadius: '8px', fontSize: '11.5px', fontWeight: 600, cursor: 'pointer', border: duration === d ? '1px solid rgba(139,92,246,0.5)' : '1px solid rgba(139,92,246,0.15)', background: duration === d ? 'rgba(139,92,246,0.2)' : 'rgba(15,10,46,0.5)', color: duration === d ? '#c4b5fd' : '#9080cc', fontFamily: 'inherit' }}>
+                      {d}s
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div style={{ marginBottom: '14px' }}>
+                <div style={{ fontSize: '10px', fontWeight: 700, color: '#9080cc', textTransform: 'uppercase', letterSpacing: '.7px', marginBottom: '7px' }}>Aspect Ratio</div>
+                <div style={{ display: 'flex', gap: '5px' }}>
+                  {['16:9', '9:16', '1:1'].map((r) => (
+                    <button key={r} onClick={() => setRatio(r)} style={{ flex: 1, padding: '9px 3px', borderRadius: '8px', fontSize: '11.5px', fontWeight: 600, cursor: 'pointer', border: ratio === r ? '1px solid rgba(139,92,246,0.5)' : '1px solid rgba(139,92,246,0.15)', background: ratio === r ? 'rgba(139,92,246,0.2)' : 'rgba(15,10,46,0.5)', color: ratio === r ? '#c4b5fd' : '#9080cc', fontFamily: 'inherit' }}>
+                      {r}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '2px' }}>
+                  <span style={{ fontSize: '10px', fontWeight: 700, color: '#9080cc', textTransform: 'uppercase', letterSpacing: '.7px' }}>Audio</span>
+                  <button
+                    onClick={() => setAudioOn((v) => !v)}
+                    style={{ width: '38px', height: '21px', borderRadius: '11px', border: 'none', cursor: 'pointer', position: 'relative', background: audioOn ? '#8b5cf6' : 'rgba(139,92,246,0.2)', transition: 'background .15s' }}
+                  >
+                    <span style={{ position: 'absolute', top: '2px', left: audioOn ? '19px' : '2px', width: '17px', height: '17px', borderRadius: '50%', background: '#fff', transition: 'left .15s' }} />
+                  </button>
+                </div>
+                <p style={{ fontSize: '10.5px', color: '#9080cc', marginTop: '6px', lineHeight: 1.4 }}>
+                  Generate native audio with lip-sync and sound effects.
+                </p>
               </div>
             </div>
 
-            <div style={{ background: 'rgba(15,10,46,0.6)', border: '1px solid rgba(139,92,246,0.15)', borderRadius: '9px', padding: '9px 11px' }}>
-              <div style={{ fontSize: '10px', fontWeight: 700, color: '#9080cc', textTransform: 'uppercase', letterSpacing: '.7px', marginBottom: '6px' }}>Duration</div>
-              <div style={{ display: 'flex', gap: '3px' }}>
-                {[5, 10, 15].map((d) => (
-                  <button key={d} onClick={() => setDuration(d)} style={{
-                    flex: 1, padding: '5px 3px', borderRadius: '6px', fontSize: '11px', fontWeight: 600, textAlign: 'center', cursor: 'pointer', border: 'none', fontFamily: 'inherit',
-                    background: duration === d ? 'rgba(139,92,246,0.2)' : 'transparent',
-                    color: duration === d ? '#c4b5fd' : '#9080cc',
-                    outline: duration === d ? '1px solid rgba(139,92,246,0.35)' : '1px solid transparent',
-                  }}>{d}s</button>
-                ))}
+            {/* Cost Estimator */}
+            <div style={{ background: 'rgba(251,191,36,0.06)', border: '1px solid rgba(251,191,36,0.25)', borderRadius: '16px', padding: '16px' }}>
+              <div style={{ fontSize: '11px', fontWeight: 700, color: '#fbbf24', marginBottom: '10px' }}>Cost Estimator</div>
+              <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between' }}>
+                <span style={{ fontSize: '24px', fontWeight: 800, color: '#fff' }}>~{estCredits} Credits</span>
+                <span style={{ fontSize: '10px', color: '#9080cc' }}>Estimated cost</span>
+              </div>
+              <div style={{ fontSize: '11px', color: '#c8c0ff', marginTop: '6px' }}>
+                {resolution} · {mode === 'multi' ? (audioOn ? '8s/scene' : '10s/scene') : `${duration}s`} · {audioOn ? 'Audio on' : 'No audio'}
               </div>
             </div>
 
-            <div style={{ background: 'rgba(15,10,46,0.6)', border: '1px solid rgba(139,92,246,0.15)', borderRadius: '9px', padding: '9px 11px' }}>
-              <div style={{ fontSize: '10px', fontWeight: 700, color: '#9080cc', textTransform: 'uppercase', letterSpacing: '.7px', marginBottom: '6px' }}>Aspect Ratio</div>
-              <div style={{ display: 'flex', gap: '3px' }}>
-                {['16:9', '9:16', '1:1'].map((r) => (
-                  <button key={r} onClick={() => setRatio(r)} style={{
-                    flex: 1, padding: '5px 3px', borderRadius: '6px', fontSize: '11px', fontWeight: 600, textAlign: 'center', cursor: 'pointer', border: 'none', fontFamily: 'inherit',
-                    background: ratio === r ? 'rgba(139,92,246,0.2)' : 'transparent',
-                    color: ratio === r ? '#c4b5fd' : '#9080cc',
-                    outline: ratio === r ? '1px solid rgba(139,92,246,0.35)' : '1px solid transparent',
-                  }}>{r}</button>
-                ))}
-              </div>
-            </div>
-
-            <div style={{ background: 'rgba(15,10,46,0.6)', border: '1px solid rgba(139,92,246,0.15)', borderRadius: '9px', padding: '9px 11px' }}>
-              <div style={{ fontSize: '10px', fontWeight: 700, color: '#9080cc', textTransform: 'uppercase', letterSpacing: '.7px', marginBottom: '6px' }}>Audio / Lip-sync</div>
-              <div style={{ display: 'flex', gap: '3px' }}>
-                {[{ label: 'Off', val: false }, { label: 'On', val: true }].map((o) => (
-                  <button key={o.label} onClick={() => setAudioOn(o.val)} style={{
-                    flex: 1, padding: '5px 3px', borderRadius: '6px', fontSize: '11px', fontWeight: 600, textAlign: 'center', cursor: 'pointer', border: 'none', fontFamily: 'inherit',
-                    background: audioOn === o.val ? 'rgba(139,92,246,0.2)' : 'transparent',
-                    color: audioOn === o.val ? '#c4b5fd' : '#9080cc',
-                    outline: audioOn === o.val ? '1px solid rgba(139,92,246,0.35)' : '1px solid transparent',
-                  }}>{o.label}</button>
-                ))}
-              </div>
-            </div>
-          </div>
-
-          {error && (
-            <div style={{ margin: '10px 14px 0', padding: '9px 12px', background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '8px', color: '#fca5a5', fontSize: '12px' }}>
-              {error}
-            </div>
-          )}
-
-          <div style={{ padding: '12px 14px 14px' }}>
             {!isSignedIn && sessionStatus !== 'loading' && (
-              <div style={{ marginBottom: '10px', padding: '9px 12px', background: 'rgba(139,92,246,0.1)', border: '1px solid rgba(139,92,246,0.3)', borderRadius: '8px', color: '#c4b5fd', fontSize: '12px', textAlign: 'center' }}>
+              <div style={{ padding: '9px 12px', background: 'rgba(139,92,246,0.1)', border: '1px solid rgba(139,92,246,0.3)', borderRadius: '10px', color: '#c4b5fd', fontSize: '12px', textAlign: 'center' }}>
                 Sign in above to start generating videos.
               </div>
             )}
+
             <button
               onClick={handleGenerate}
               disabled={generating || referenceUploading || !isSignedIn}
               style={{
-                display: 'flex', width: '100%', height: '48px', background: (generating || !isSignedIn) ? '#5b3fa0' : '#8b5cf6', border: 'none', borderRadius: '11px', color: '#fff', fontSize: '15px', fontWeight: 800, alignItems: 'center', justifyContent: 'center', gap: '7px', cursor: (generating || !isSignedIn) ? 'not-allowed' : 'pointer', textDecoration: 'none', boxShadow: '0 0 28px rgba(139,92,246,0.4)', fontFamily: 'inherit', opacity: !isSignedIn ? 0.6 : 1,
-              }}>
+                display: 'flex', width: '100%', height: '50px', background: (generating || !isSignedIn) ? '#5b3fa0' : 'linear-gradient(135deg,#8b5cf6,#7c3aed)', border: 'none', borderRadius: '13px', color: '#fff', fontSize: '15px', fontWeight: 800, alignItems: 'center', justifyContent: 'center', gap: '7px', cursor: (generating || !isSignedIn) ? 'not-allowed' : 'pointer', fontFamily: 'inherit', boxShadow: '0 0 28px rgba(139,92,246,0.4)', opacity: !isSignedIn ? 0.6 : 1,
+              }}
+            >
               {generating ? (
                 <>
                   <span style={{ width: '14px', height: '14px', border: '2px solid rgba(255,255,255,0.4)', borderTopColor: '#fff', borderRadius: '50%', display: 'inline-block', animation: 'spin 0.8s linear infinite' }} />
@@ -1004,178 +1091,22 @@ export default function Home() {
                 </>
               )}
             </button>
-            <p style={{ textAlign: 'center', fontSize: '11px', color: '#9080cc', marginTop: '8px' }}>
-              Generation usually takes 1-3 minutes
+            <p style={{ textAlign: 'center', fontSize: '11px', color: '#9080cc', marginTop: '-4px' }}>
+              Generation takes 1–3 minutes
             </p>
           </div>
         </div>
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-
-          <div style={{ background: 'rgba(26,18,69,0.8)', border: '1px solid rgba(139,92,246,0.25)', borderRadius: '16px', overflow: 'hidden' }}>
-            <div style={{ height: '1px', background: 'linear-gradient(90deg,transparent,#22d3ee,transparent)' }} />
-            <div style={{ padding: '11px 14px', fontSize: '10px', fontWeight: 700, color: '#9080cc', textTransform: 'uppercase', letterSpacing: '1px', borderBottom: '1px solid rgba(139,92,246,0.15)' }}>
-              Preview
-            </div>
-
-            {videoUrl ? (
-              <div style={{ padding: '12px' }}>
-                <div style={{ position: 'relative', borderRadius: '10px', overflow: 'hidden' }}>
-                  <video src={videoUrl} controls autoPlay loop style={{ width: '100%', display: 'block', borderRadius: '10px', background: '#000' }} />
-                  {showSafeZones && ratio === '9:16' && (
-                    <div style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}>
-                      {/* Bottom zone — caption/username/song info in TikTok/Reels/Shorts */}
-                      <div style={{ position: 'absolute', left: 0, right: 0, bottom: 0, height: '18%', background: 'repeating-linear-gradient(45deg, rgba(239,68,68,0.25), rgba(239,68,68,0.25) 6px, rgba(239,68,68,0.1) 6px, rgba(239,68,68,0.1) 12px)', borderTop: '1px dashed rgba(239,68,68,0.6)' }} />
-                      {/* Right column — like/comment/share/save icons */}
-                      <div style={{ position: 'absolute', right: 0, top: '35%', bottom: '18%', width: '14%', background: 'repeating-linear-gradient(45deg, rgba(239,68,68,0.25), rgba(239,68,68,0.25) 6px, rgba(239,68,68,0.1) 6px, rgba(239,68,68,0.1) 12px)', borderLeft: '1px dashed rgba(239,68,68,0.6)' }} />
-                      {/* Top zone — status bar / notifications */}
-                      <div style={{ position: 'absolute', left: 0, right: 0, top: 0, height: '6%', background: 'repeating-linear-gradient(45deg, rgba(239,68,68,0.2), rgba(239,68,68,0.2) 6px, rgba(239,68,68,0.08) 6px, rgba(239,68,68,0.08) 12px)' }} />
-                    </div>
-                  )}
-                </div>
-
-                {/* NEW: Safe-Zone Awareness toggle */}
-                <button
-                  onClick={() => setShowSafeZones((v) => !v)}
-                  style={{
-                    display: 'block', width: '100%', textAlign: 'center', marginTop: '8px', padding: '7px', borderRadius: '8px', border: '1px solid rgba(139,92,246,0.2)',
-                    background: showSafeZones ? 'rgba(139,92,246,0.15)' : 'transparent', color: '#9080cc', fontSize: '11px', fontWeight: 600, cursor: 'pointer', fontFamily: 'inherit',
-                  }}
-                >
-                  {showSafeZones ? '✓ ' : '👁 '}Show Safe Zones (TikTok/Reels/Shorts UI overlap)
-                </button>
-                {showSafeZones && ratio !== '9:16' && (
-                  <p style={{ fontSize: '10px', color: '#9080cc', marginTop: '4px', textAlign: 'center' }}>
-                    Safe zone guides apply to 9:16 vertical video — switch aspect ratio to 9:16 to preview them.
-                  </p>
-                )}
-                {showSafeZones && ratio === '9:16' && (
-                  <p style={{ fontSize: '10px', color: '#9080cc', marginTop: '4px', textAlign: 'center' }}>
-                    Shaded areas may be covered by the app's own UI (captions, buttons) when posted — avoid important content there.
-                  </p>
-                )}
-
-                {/* NEW: Auto-Captions */}
-                <button
-                  onClick={handleAddCaptions}
-                  disabled={addingCaptions || exportingFormat !== null}
-                  style={{
-                    display: 'block', width: '100%', textAlign: 'center', marginTop: '10px', padding: '10px', borderRadius: '9px', border: '1px solid rgba(139,92,246,0.3)',
-                    background: addingCaptions ? 'rgba(139,92,246,0.08)' : 'rgba(139,92,246,0.15)', color: '#c4b5fd', fontSize: '12px', fontWeight: 700, cursor: addingCaptions ? 'not-allowed' : 'pointer', fontFamily: 'inherit',
-                  }}
-                >
-                  {addingCaptions ? (statusText || 'Adding captions...') : '💬 Add Captions'}
-                </button>
-
-                <a href={videoUrl} download target="_blank" rel="noopener noreferrer" style={{
-                  display: 'block', textAlign: 'center', marginTop: '8px', padding: '10px', background: 'rgba(139,92,246,0.15)', border: '1px solid rgba(139,92,246,0.3)', borderRadius: '9px', color: '#c4b5fd', fontSize: '12px', fontWeight: 700, textDecoration: 'none',
-                }}>⬇ Download Video</a>
-
-                {/* NEW: Multi-Aspect Export */}
-                <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px solid rgba(139,92,246,0.15)' }}>
-                  <div style={{ fontSize: '10px', fontWeight: 700, color: '#9080cc', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '8px' }}>
-                    Export for Other Platforms
-                  </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-                    {EXPORT_FORMATS.map((f) => (
-                      <button
-                        key={f.id}
-                        onClick={() => reframeVideo(videoUrl, f.ratio, `${f.label} ${f.id}`)}
-                        disabled={exportingFormat !== null || addingCaptions}
-                        style={{
-                          display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '9px 12px', borderRadius: '8px',
-                          border: '1px solid rgba(139,92,246,0.25)', background: 'rgba(15,10,46,0.6)', color: '#c8c0ff', fontSize: '12px', fontWeight: 600,
-                          cursor: exportingFormat !== null ? 'not-allowed' : 'pointer', fontFamily: 'inherit',
-                        }}
-                      >
-                        <span>{f.label}</span>
-                        <span style={{ color: '#9080cc', fontSize: '11px' }}>
-                          {exportingFormat === `${f.label} ${f.id}` ? 'Exporting...' : `${f.id} ⬇`}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                  <p style={{ fontSize: '10px', color: '#9080cc', marginTop: '8px' }}>
-                    Re-crops your video to fit each platform — no re-generation needed. Note: switching between very different shapes (e.g. portrait ↔ landscape) will crop out part of the frame.
-                  </p>
-                </div>
-              </div>
-            ) : videoParts ? (
-              <div style={{ padding: '12px', display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                <p style={{ fontSize: '11px', color: '#9080cc' }}>Your video was generated in 2 parts. Download both parts below:</p>
-                {videoParts.map((url, i) => (
-                  <div key={i}>
-                    <video src={url} controls style={{ width: '100%', borderRadius: '10px', background: '#000' }} />
-                    <a href={url} download target="_blank" rel="noopener noreferrer" style={{
-                      display: 'block', textAlign: 'center', marginTop: '6px', padding: '8px', background: 'rgba(139,92,246,0.15)', border: '1px solid rgba(139,92,246,0.3)', borderRadius: '9px', color: '#c4b5fd', fontSize: '11px', fontWeight: 700, textDecoration: 'none',
-                    }}>⬇ Download Part {i === 0 ? 'A' : 'B'}</a>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div style={{ height: '220px', background: 'linear-gradient(145deg,#07051a,#120d35)', position: 'relative', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid rgba(139,92,246,0.1)', margin: '12px', borderRadius: '10px' }}>
-                {generating && (
-                  <div style={{ position: 'absolute', top: 0, left: 0, right: 0, height: '1px', background: 'linear-gradient(90deg,transparent,rgba(139,92,246,0.8),rgba(244,114,182,0.5),transparent)', animation: 'scan 3s linear infinite' }} />
-                )}
-                <div style={{ width: '44px', height: '44px', borderRadius: '12px', background: 'rgba(139,92,246,0.15)', border: '1px solid rgba(139,92,246,0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#c4b5fd" strokeWidth="1.5">
-                    <polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/>
-                  </svg>
-                </div>
-                <div style={{ position: 'absolute', bottom: '10px', width: '80%', textAlign: 'center', fontSize: '12px', color: '#9080cc' }}>
-                  {generating ? (statusText || 'Generating...') : 'Write a prompt and click Generate'}
-                </div>
-                <div style={{ position: 'absolute', top: '8px', left: '8px', width: '12px', height: '12px', borderTop: '1.5px solid rgba(139,92,246,0.5)', borderLeft: '1.5px solid rgba(139,92,246,0.5)' }} />
-                <div style={{ position: 'absolute', top: '8px', right: '8px', width: '12px', height: '12px', borderTop: '1.5px solid rgba(139,92,246,0.5)', borderRight: '1.5px solid rgba(139,92,246,0.5)' }} />
-                <div style={{ position: 'absolute', bottom: '8px', left: '8px', width: '12px', height: '12px', borderBottom: '1.5px solid rgba(139,92,246,0.5)', borderLeft: '1.5px solid rgba(139,92,246,0.5)' }} />
-                <div style={{ position: 'absolute', bottom: '8px', right: '8px', width: '12px', height: '12px', borderBottom: '1.5px solid rgba(139,92,246,0.5)', borderRight: '1.5px solid rgba(139,92,246,0.5)' }} />
-              </div>
-            )}
-
-            <div style={{ padding: '0 12px 12px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
-              <div style={{ background: 'rgba(15,10,46,0.6)', border: '1px solid rgba(139,92,246,0.15)', borderRadius: '9px', padding: '10px' }}>
-                <div style={{ fontSize: '18px', fontWeight: 800, color: '#c4b5fd' }}>{videosGenerated}</div>
-                <div style={{ fontSize: '10px', color: '#9080cc' }}>Videos generated</div>
-              </div>
-              <div style={{ background: 'rgba(15,10,46,0.6)', border: '1px solid rgba(139,92,246,0.15)', borderRadius: '9px', padding: '10px' }}>
-                <div style={{ fontSize: '18px', fontWeight: 800, color: '#34d399' }}>∞</div>
-                <div style={{ fontSize: '10px', color: '#9080cc' }}>Free while in beta</div>
-              </div>
-            </div>
+        {/* Your Creations strip */}
+        <div style={{ marginTop: '22px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span style={{ fontSize: '15px', fontWeight: 700, color: '#fff' }}>Your Creations</span>
+          <a href="/creations" style={{ fontSize: '12px', color: '#c4b5fd', textDecoration: 'none', fontWeight: 600 }}>View all →</a>
+        </div>
+        <div style={{ marginTop: '10px', display: 'flex', gap: '10px' }}>
+          <div style={{ flex: 1, background: 'rgba(26,18,69,0.6)', border: '1px dashed rgba(139,92,246,0.25)', borderRadius: '12px', padding: '18px', textAlign: 'center' }}>
+            <div style={{ fontSize: '18px', fontWeight: 800, color: '#c4b5fd' }}>{videosGenerated}</div>
+            <div style={{ fontSize: '11px', color: '#9080cc' }}>Videos generated this session — full history on the Gallery page</div>
           </div>
-
-          <div style={{ background: 'rgba(26,18,69,0.8)', border: '1px solid rgba(139,92,246,0.25)', borderRadius: '14px', overflow: 'hidden' }}>
-            <div style={{ padding: '11px 14px', fontSize: '12px', fontWeight: 700, color: '#fff', borderBottom: '1px solid rgba(139,92,246,0.15)' }}>Cost guide (approx.)</div>
-            {[
-              { label: '480p · 5 sec, no audio', sub: 'Draft', credits: '~$0.20' },
-              { label: '720p · 10 sec, no audio', sub: 'Most popular ⭐', credits: '~$0.80', hot: true },
-              { label: '720p · 8 sec, audio on', sub: 'Lip-sync', credits: '~$1.20' },
-            ].map((item) => (
-              <div key={item.label} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '9px 14px', borderBottom: '1px solid rgba(139,92,246,0.1)', background: item.hot ? 'rgba(139,92,246,0.07)' : 'transparent' }}>
-                <div>
-                  <div style={{ fontSize: '12px', fontWeight: 600, color: '#fff' }}>{item.label}</div>
-                  <div style={{ fontSize: '10px', color: item.hot ? '#c4b5fd' : '#9080cc' }}>{item.sub}</div>
-                </div>
-                <div style={{ fontSize: '13px', fontWeight: 800, color: '#c4b5fd' }}>{item.credits}</div>
-              </div>
-            ))}
-          </div>
-
-          <div style={{ background: 'linear-gradient(135deg,rgba(139,92,246,0.1),rgba(244,114,182,0.07))', border: '1px solid rgba(139,92,246,0.25)', borderRadius: '14px', padding: '16px' }}>
-            <div style={{ fontSize: '12px', fontWeight: 700, color: '#fff', marginBottom: '10px' }}>Why Vidro?</div>
-            {[
-              { icon: '🎬', text: 'Seedance quality at 75% less cost' },
-              { icon: '🎙️', text: 'Native audio + lip-sync (Veo 3.1)' },
-              { icon: '✂️', text: 'Auto stitching for Multi-Scene — live now' },
-              { icon: '⚡', text: 'Ready in minutes, download instantly' },
-            ].map((item) => (
-              <div key={item.text} style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '7px', fontSize: '12px', color: '#c8c0ff' }}>
-                <span>{item.icon}</span>
-                {item.text}
-              </div>
-            ))}
-          </div>
-
         </div>
       </div>
 
