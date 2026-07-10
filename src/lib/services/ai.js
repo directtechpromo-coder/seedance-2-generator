@@ -504,8 +504,18 @@ async function transcribeAudio(videoUrl) {
 
 /**
  * Estimate cost in USD before calling the API. Used for UI cost previews.
+ * NEW: also handles Reference Video/Image generation (Seedance 2.0), which has
+ * different pricing than Wan/Veo and can have a non-numeric duration ("auto").
  */
-function estimateCost({ generate_audio = false, resolution = "720p", duration = 5 }) {
+function estimateCost({ mode, generate_audio = false, resolution = "720p", duration = 5 }) {
+  // Reference generation (video/image reference editing) — priced separately,
+  // roughly $0.30/sec at the standard tier we use for fidelity. "auto" duration
+  // isn't a real number, so we assume a typical 8s clip for estimation purposes.
+  if (mode === "reference-edit" || mode === "reference-images") {
+    const refDuration = Number(duration) > 0 ? Number(duration) : 8;
+    return +(0.3 * refDuration).toFixed(4);
+  }
+
   const totalDuration = Math.min(Math.max(Number(duration) || 5, 1), 15);
 
   if (generate_audio) {
@@ -518,11 +528,21 @@ function estimateCost({ generate_audio = false, resolution = "720p", duration = 
   return +(rate * totalDuration).toFixed(4);
 }
 
+// Credit conversion: $5 = 50 credits (from the Stripe default plan), so
+// 1 credit = $0.10. Rounds UP so we never under-charge/under-check.
+const USD_PER_CREDIT = 0.1;
+
+function estimateCredits(options) {
+  const usd = estimateCost(options);
+  return Math.max(1, Math.ceil(usd / USD_PER_CREDIT));
+}
+
 export const AIService = {
   generate,
   generateReferenceEdit,
   transcribeAudio,
   estimateCost,
+  estimateCredits,
 };
 
-export { generate, generateReferenceEdit, transcribeAudio, estimateCost };
+export { generate, generateReferenceEdit, transcribeAudio, estimateCost, estimateCredits };
