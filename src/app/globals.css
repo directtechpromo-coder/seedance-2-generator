@@ -1,3 +1,4 @@
+@import "tailwindcss";
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
 
 * {
@@ -22,6 +23,25 @@
   --cyan: #22d3ee;
   --green: #34d399;
   --amber: #fbbf24;
+
+  /* Used directly via var(--solid-bg) in some components */
+  --solid-bg: #1a1245;
+}
+
+@theme {
+  /* Maps Tailwind utility classes like bg-primary-500, text-primary-400 */
+  --color-primary-400: #a78bfa;
+  --color-primary-500: #8b5cf6;
+  --color-primary-600: #7c3aed;
+
+  /* Maps text-foreground, text-muted */
+  --color-foreground: #ffffff;
+  --color-muted: #9080cc;
+
+  /* Maps bg-glass-bg, border-glass-border, bg-glass-hover */
+  --color-glass-bg: rgba(26, 18, 69, 0.6);
+  --color-glass-border: rgba(139, 92, 246, 0.2);
+  --color-glass-hover: rgba(139, 92, 246, 0.12);
 }
 
 html, body {
