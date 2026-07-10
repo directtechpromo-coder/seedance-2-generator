@@ -1,18 +1,58 @@
 import { NextResponse } from "next/server";
 import { getServerSession } from "next-auth/next";
 import { authOptions } from "@/lib/auth";
+import { prisma } from "@/lib/prisma";
 import { AIService } from "@/lib/services/ai";
 
 export const maxDuration = 120; // seconds — needed for Clip A/B chaining and scene-to-scene frame chaining
 
+// NEW: creates a Creation row (or one per clip, for split/multi-clip results) so
+// generation history and credit deduction can be tracked. Best-effort — logging
+// failures here should never break the actual generation response.
+async function recordCreations({ result, userId, prompt, aspect_ratio, resolution, estimatedCredits }) {
+  try {
+    if (result.clips && Array.isArray(result.clips)) {
+      const perClipCredits = Math.max(1, Math.ceil(estimatedCredits / result.clips.length));
+      await prisma.creation.createMany({
+        data: result.clips.map((clip) => ({
+          requestId: clip.request_id,
+          userId,
+          prompt,
+          aspectRatio: aspect_ratio,
+          resolution,
+          duration: typeof clip.duration === "number" ? Math.round(clip.duration) : null,
+          status: "processing",
+          creditsCost: perClipCredits,
+        })),
+      });
+    } else if (result.request_id) {
+      await prisma.creation.create({
+        data: {
+          requestId: result.request_id,
+          userId,
+          prompt,
+          aspectRatio: aspect_ratio,
+          resolution,
+          duration: typeof result.metadata?.duration === "number" ? Math.round(result.metadata.duration) : null,
+          status: "processing",
+          creditsCost: estimatedCredits,
+        },
+      });
+    }
+  } catch (e) {
+    console.error("[RECORD_CREATION]", e);
+  }
+}
+
 export async function POST(req) {
   try {
-    // NEW: real authentication — every generation now requires a signed-in user.
+    // Real authentication — every generation now requires a signed-in user.
     const session = await getServerSession(authOptions);
     if (!session?.user) {
       return NextResponse.json({ error: "Please sign in to generate videos." }, { status: 401 });
     }
     const userId = session.user.id;
+    const isAdmin = session.user.isAdmin;
 
     const body = await req.json();
     const {
@@ -30,6 +70,20 @@ export async function POST(req) {
       video_url, // reference video URL for Reference Video Editing mode
       image_urls, // reference image URLs for Product/Character Reference mode (Multi-Scene ads)
     } = body;
+
+    // NEW: check the user has enough credits BEFORE calling FAL, so we never
+    // charge for (or waste an API call on) a generation they can't afford.
+    // Admins bypass this check entirely (session.user.isAdmin is set from auth.js).
+    const estimatedCredits = AIService.estimateCredits({ mode, generate_audio, resolution, duration });
+    if (!isAdmin) {
+      const dbUser = await prisma.user.findUnique({ where: { id: userId }, select: { credits: true } });
+      if (!dbUser || dbUser.credits < estimatedCredits) {
+        return NextResponse.json(
+          { error: `Insufficient credits. This needs about ${estimatedCredits} credits, you have ${dbUser?.credits ?? 0}.` },
+          { status: 402 }
+        );
+      }
+    }
 
     // Reference Generation — used by both Reference Video Editing (video_url) and
     // Product/Character Reference in Multi-Scene mode (image_urls). Uses ByteDance's
@@ -50,6 +104,7 @@ export async function POST(req) {
         duration,
         generate_audio,
       });
+      await recordCreations({ result, userId, prompt, aspect_ratio, resolution, estimatedCredits });
       return NextResponse.json({ ...result, metadata: { ...result.metadata, prompt } });
     }
 
@@ -69,6 +124,7 @@ export async function POST(req) {
       seed,
       previous_video_url,
     });
+    await recordCreations({ result, userId, prompt, aspect_ratio, resolution, estimatedCredits });
     return NextResponse.json({ ...result, metadata: { ...result.metadata, prompt, aspect_ratio, resolution } });
   } catch (error) {
     console.error("[AI_SEEDANCE]", error);
