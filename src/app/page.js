@@ -255,9 +255,11 @@ export default function Home() {
     return ffmpeg
   }
 
-  // Smart scene parser. If the script uses [SCENE 1], [SCENE 2]... markers,
-  // split on those. Otherwise, split on blank lines (paragraph breaks) — so a
-  // multi-line description of one scene stays as ONE scene, not several.
+  // Scene parser. Only splits into multiple scenes when the customer explicitly
+  // uses [SCENE 1], [SCENE 2]... markers. Without those markers, the ENTIRE
+  // text is treated as a single scene — even if it has paragraph breaks — so a
+  // longer description written across multiple paragraphs doesn't silently
+  // turn into extra scenes (and extra credits spent) the customer never asked for.
   const parseScenes = (text) => {
     const sceneMarkerRegex = /\[SCENE\s*\d+\]/gi
     if (sceneMarkerRegex.test(text)) {
@@ -266,10 +268,8 @@ export default function Home() {
         .map((s) => s.trim())
         .filter((s) => s.length > 0)
     }
-    return text
-      .split(/\n\s*\n/)
-      .map((s) => s.trim())
-      .filter((s) => s.length > 0)
+    const trimmed = text.trim()
+    return trimmed ? [trimmed] : []
   }
 
   const stopPolling = () => {
@@ -1104,7 +1104,7 @@ export default function Home() {
                 </div>
 
                 <div style={{ fontSize: '10px', fontWeight: 700, color: '#9080cc', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '6px' }}>
-                  Scenes <span style={{ opacity: 0.6, textTransform: 'none', fontWeight: 400 }}>(each is {audioOn ? '8s' : '10s'})</span>
+                  Scenes <span style={{ opacity: 0.6, textTransform: 'none', fontWeight: 400 }}>(use [SCENE 1], [SCENE 2]... tags to create multiple scenes — each is {audioOn ? '8s' : '10s'}. Without tags, your whole text is generated as ONE scene.)</span>
                 </div>
                 <div style={{ background: 'rgba(15,10,46,0.8)', border: '1px solid rgba(139,92,246,0.2)', borderRadius: '10px' }}>
                   <textarea
