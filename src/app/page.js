@@ -45,6 +45,8 @@ function MultiActionWarning({ scenesArray }) {
     </div>
   )
 }
+
+function RiskWarningBanner({ text }) {
   const risks = scanForRiskyContent(text)
   if (risks.length === 0) return null
   return (
@@ -564,7 +566,7 @@ export default function Home() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [videoUrl])
 
-
+  const handleGenerateSingle = async (promptOverride) => {
     const activePrompt = promptOverride ?? prompt
     if (!activePrompt.trim()) {
       setError('Please write a prompt first.')
