@@ -1,5 +1,5 @@
 'use client'
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { useSession } from 'next-auth/react'
 import { AD_TEMPLATES } from '@/lib/adTemplates'
 import { scanForRiskyContent } from '@/lib/contentRiskCheck'
@@ -9,7 +9,42 @@ import { scanForRiskyContent } from '@/lib/contentRiskCheck'
 // (based on real failures we've seen: smoking, police chases, weapons, etc.).
 // This does NOT block generation — it's a heads-up so the customer can decide
 // whether to reword before spending credits on a scene that might fail.
-function RiskWarningBanner({ text }) {
+// NEW: Multi-action scene detector — flags scenes that pack more than one
+// sequential action into a single clip (a common cause of the video model
+// "losing the plot" mid-scene). Non-blocking — just nudges toward splitting.
+const SEQUENCE_MARKERS = [
+  'then', 'after that', 'next,', 'afterwards', 'once she', 'once he',
+  'phir', 'uske baad', 'us ke baad', 'aur phir', 'ke baad',
+]
+function detectMultiActionScenes(scenesArray) {
+  return scenesArray
+    .map((text, index) => {
+      const lower = text.toLowerCase()
+      const foundMarkers = SEQUENCE_MARKERS.filter((m) => lower.includes(m))
+      // Heuristic 2: 3+ comma-separated clauses often means 3+ different actions crammed in.
+      const clauseCount = text.split(',').length
+      if (foundMarkers.length > 0 || clauseCount >= 4) {
+        return { index, reason: foundMarkers.length > 0 ? `contains a sequence word ("${foundMarkers[0]}")` : 'has several comma-separated actions' }
+      }
+      return null
+    })
+    .filter(Boolean)
+}
+
+function MultiActionWarning({ scenesArray }) {
+  const flagged = detectMultiActionScenes(scenesArray)
+  if (flagged.length === 0) return null
+  return (
+    <div style={{ margin: '8px 0', padding: '10px 12px', background: 'rgba(251,191,36,0.08)', border: '1px solid rgba(251,191,36,0.3)', borderRadius: '8px' }}>
+      <div style={{ fontSize: '11px', fontWeight: 700, color: '#fbbf24', marginBottom: '6px' }}>⚠ Some scenes may be doing too much at once</div>
+      {flagged.map((f) => (
+        <div key={f.index} style={{ fontSize: '11px', color: '#fde68a', marginBottom: '4px' }}>
+          Scene {f.index + 1} {f.reason} — AI video models handle one clear action per scene much better. Consider splitting it into two [SCENE] blocks.
+        </div>
+      ))}
+    </div>
+  )
+}
   const risks = scanForRiskyContent(text)
   if (risks.length === 0) return null
   return (
@@ -64,6 +99,59 @@ export default function Home() {
   const [retryingIndex, setRetryingIndex] = useState(null)
   const [stitching, setStitching] = useState(false)
   const cancelRef = useRef(false)
+
+  // NEW: Scene-by-scene approval — in Multi-Scene mode, pause after each scene
+  // so the customer can preview it before the next (and costlier) scene is
+  // generated. Prevents wasting credits on a whole multi-scene run when an
+  // early scene came out wrong.
+  const [reviewEachScene, setReviewEachScene] = useState(true)
+  const [awaitingApproval, setAwaitingApproval] = useState(false)
+  const [pendingSceneIndex, setPendingSceneIndex] = useState(null)
+
+  // NEW: Prompt clarity review — before generating, the prompt/scene script is
+  // checked for ambiguity. If flagged, the customer sees original vs. an
+  // AI-suggested clearer version and picks one before any credits are spent.
+  const [checkingPrompt, setCheckingPrompt] = useState(false)
+  const [promptReview, setPromptReview] = useState(null) // { original, issues, improvedPrompt }
+
+  // NEW: Post-generation AI QA check — after the final video is ready, grabs a
+  // frame and asks a vision model whether it looks consistent with the prompt.
+  // Purely informational (never blocks download/use).
+  const [qaChecking, setQaChecking] = useState(false)
+  const [qaResult, setQaResult] = useState(null) // { matches, note }
+  const [lastGenPromptForQA, setLastGenPromptForQA] = useState('')
+
+  // NEW: Structured Prompt Builder — guided fields (one clear subject + one
+  // clear action) compose into the prompt, instead of relying on the customer
+  // to freehand a well-formed prompt. Reduces the ambiguity that confuses the
+  // video model in the first place.
+  const [showPromptBuilder, setShowPromptBuilder] = useState(false)
+  const [builderSubject, setBuilderSubject] = useState('')
+  const [builderAction, setBuilderAction] = useState('')
+  const [builderSetting, setBuilderSetting] = useState('')
+  const [builderCamera, setBuilderCamera] = useState('')
+  const [builderStyle, setBuilderStyle] = useState('')
+
+  const composeStructuredPrompt = () => {
+    const parts = []
+    if (builderSubject.trim()) parts.push(builderSubject.trim())
+    if (builderAction.trim()) parts.push(builderAction.trim())
+    let sentence = parts.join(', ')
+    if (builderSetting.trim()) sentence += `, in ${builderSetting.trim()}`
+    sentence = sentence.trim()
+    if (sentence && !sentence.endsWith('.')) sentence += '.'
+    const extras = []
+    if (builderCamera) extras.push(builderCamera)
+    if (builderStyle.trim()) extras.push(builderStyle.trim())
+    if (extras.length) sentence += ' ' + extras.join(', ') + '.'
+    return sentence.trim()
+  }
+
+  const applyStructuredPrompt = () => {
+    const composed = composeStructuredPrompt()
+    if (!composed) return
+    setPrompt(composed)
+  }
 
   // NEW: Ad Template Library state
   const [selectedTemplateId, setSelectedTemplateId] = useState(null)
@@ -411,21 +499,90 @@ export default function Home() {
     }
   }
 
-  const handleGenerateSingle = async () => {
-    if (!prompt.trim()) {
+  // Grabs a single frame from a video URL via an off-screen <video> + <canvas>.
+  // Works for both FAL-hosted clips and locally-stitched blob: URLs. Fails
+  // silently (QA check just gets skipped) if the source can't be read into a
+  // canvas — this must never break the customer's actual video.
+  const captureFrameFromVideoUrl = (url) =>
+    new Promise((resolve, reject) => {
+      const video = document.createElement('video')
+      video.crossOrigin = 'anonymous'
+      video.muted = true
+      video.playsInline = true
+      video.src = url
+      video.onloadeddata = () => {
+        try {
+          video.currentTime = Math.min(1, (video.duration || 2) / 2)
+        } catch {
+          resolve(null)
+        }
+      }
+      video.onseeked = () => {
+        try {
+          const canvas = document.createElement('canvas')
+          canvas.width = video.videoWidth || 640
+          canvas.height = video.videoHeight || 360
+          const ctx = canvas.getContext('2d')
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
+          resolve(canvas.toDataURL('image/jpeg', 0.85))
+        } catch {
+          resolve(null)
+        }
+      }
+      video.onerror = () => resolve(null)
+    })
+
+  const runQACheck = async (url, promptText) => {
+    if (!url || !promptText) return
+    setQaChecking(true)
+    setQaResult(null)
+    try {
+      const frameDataUrl = await captureFrameFromVideoUrl(url)
+      if (!frameDataUrl) {
+        setQaChecking(false)
+        return // couldn't read a frame — skip silently, don't bother the customer
+      }
+      const res = await fetch('/api/seedance/verify-video', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: promptText, frameDataUrl }),
+      })
+      const data = await res.json()
+      setQaResult(data)
+    } catch (e) {
+      console.error('QA check failed', e)
+    } finally {
+      setQaChecking(false)
+    }
+  }
+
+  // Runs automatically whenever a final video becomes ready.
+  useEffect(() => {
+    if (videoUrl && lastGenPromptForQA) {
+      runQACheck(videoUrl, lastGenPromptForQA)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [videoUrl])
+
+
+    const activePrompt = promptOverride ?? prompt
+    if (!activePrompt.trim()) {
       setError('Please write a prompt first.')
       return
     }
+    if (promptOverride) setPrompt(promptOverride)
 
     setError('')
     setVideoUrl(null)
     setVideoParts(null)
     setGenerating(true)
     setStatusText('Submitting...')
+    setQaResult(null)
 
     const finalPrompt = characterBible.trim()
-      ? `${characterBible.trim()}. ${prompt.trim()}`
-      : prompt.trim()
+      ? `${characterBible.trim()}. ${activePrompt.trim()}`
+      : activePrompt.trim()
+    setLastGenPromptForQA(activePrompt.trim())
 
     try {
       setStatusText('Generating your video... (usually 1-3 min)')
@@ -589,65 +746,177 @@ export default function Home() {
     }
   }
 
-  const handleGenerateMultiScene = async () => {
-    const scenes = parseScenes(sceneScript)
+  // Generates exactly one scene, then either pauses for approval (reviewEachScene
+  // mode) or continues straight to the next scene (auto mode) / finalizes if it
+  // was the last one.
+  const generateNextScene = async (index) => {
+    if (cancelRef.current) {
+      setStatusText('Cancelled.')
+      setGenerating(false)
+      return
+    }
+    const scene = sceneResultsRef.current[index]
+    if (!scene) return
+
+    setGenerating(true)
+    setAwaitingApproval(false)
+    setStatusText(`Scene ${index + 1}/${sceneResultsRef.current.length}: generating...`)
+
+    const ok = await runSingleScene(index, scene.text)
+
+    if (cancelRef.current) {
+      setStatusText('Cancelled.')
+      setGenerating(false)
+      return
+    }
+
+    if (!ok) {
+      // Failed scene — stop and let the customer retry it from the scene strip.
+      // No credits are spent moving forward until this one succeeds.
+      setGenerating(false)
+      setStatusText('')
+      return
+    }
+
+    if (reviewEachScene) {
+      // Pause here — show this scene for approval before spending credits on the next.
+      setGenerating(false)
+      setStatusText('')
+      setPendingSceneIndex(index)
+      setAwaitingApproval(true)
+      return
+    }
+
+    // Auto mode — continue straight to the next scene, or finalize if done.
+    const nextIndex = index + 1
+    if (nextIndex >= sceneResultsRef.current.length) {
+      setGenerating(false)
+      setStatusText('')
+      stopPolling()
+      await tryFinalizeIfAllDone()
+    } else {
+      await generateNextScene(nextIndex)
+    }
+  }
+
+  const handleGenerateMultiScene = async (scriptOverride) => {
+    const scriptToUse = scriptOverride ?? sceneScript
+    const scenes = parseScenes(scriptToUse)
 
     if (scenes.length === 0) {
       setError('Please write at least one scene.')
       return
     }
+    if (scriptOverride) setSceneScript(scriptOverride)
 
     setError('')
     setVideoUrl(null)
     setVideoParts(null)
-    setGenerating(true)
     setStitching(false)
     cancelRef.current = false
     multiSceneSeedRef.current = undefined
+    setAwaitingApproval(false)
+    setPendingSceneIndex(null)
+    setQaResult(null)
+    setLastGenPromptForQA(scenes.join(' — '))
 
     const initial = scenes.map((text, i) => ({ index: i, text, status: 'pending', url: null, error: null }))
     sceneResultsRef.current = initial
     setSceneResults(initial)
 
-    for (let i = 0; i < scenes.length; i++) {
-      if (cancelRef.current) {
-        setStatusText('Cancelled.')
-        break
-      }
-      setStatusText(`Scene ${i + 1}/${scenes.length}: generating...`)
-      await runSingleScene(i, scenes[i])
-    }
-
-    setStatusText('')
-    setGenerating(false)
-    stopPolling()
-    await tryFinalizeIfAllDone()
+    await generateNextScene(0)
   }
 
+  // Called when the customer approves the scene currently awaiting review —
+  // moves on to generating the next scene (or finalizes if it was the last one).
+  const approveSceneAndContinue = async () => {
+    if (pendingSceneIndex === null) return
+    const nextIndex = pendingSceneIndex + 1
+    setAwaitingApproval(false)
+    setPendingSceneIndex(null)
+    if (nextIndex >= sceneResultsRef.current.length) {
+      stopPolling()
+      await tryFinalizeIfAllDone()
+    } else {
+      await generateNextScene(nextIndex)
+    }
+  }
+
+  // Called when the customer isn't happy with the scene awaiting review —
+  // re-generates that same scene (same credits spent again, but nothing beyond it).
+  const regeneratePendingScene = async () => {
+    if (pendingSceneIndex === null) return
+    const index = pendingSceneIndex
+    setAwaitingApproval(false)
+    setPendingSceneIndex(null)
+    await generateNextScene(index)
+  }
+
+  // Used by the "Retry" button on a failed scene in the thumbnail strip —
+  // re-generates that scene and resumes the normal flow (approval pause or auto-continue).
   const retryScene = async (index) => {
-    const scene = sceneResultsRef.current.find((s) => s.index === index)
-    if (!scene) return
     setError('')
     setRetryingIndex(index)
-    await runSingleScene(index, scene.text)
+    await generateNextScene(index)
     setRetryingIndex(null)
-    await tryFinalizeIfAllDone()
   }
 
   const handleCancel = () => {
     cancelRef.current = true
   }
 
-  const handleGenerate = () => {
+  const handleGenerate = (override) => {
     if (mode === 'multi') {
-      handleGenerateMultiScene()
+      handleGenerateMultiScene(override)
     } else if (mode === 'text') {
-      handleGenerateSingle()
+      handleGenerateSingle(override)
     } else if (mode === 'reference') {
       handleGenerateReferenceEdit()
     } else {
       setError('This mode is still being built — use Text to Video, Multi-Scene, or Reference Video for now.')
     }
+  }
+
+  // NEW: Prompt clarity check — runs before generation for Text-to-Video and
+  // Multi-Scene (Reference Video edits an existing clip, so there's no prompt
+  // to misread the same way). If the AI flags real ambiguity, generation pauses
+  // and the customer picks their original wording or the suggested rewrite.
+  const checkPromptClarity = async (text) => {
+    const res = await fetch('/api/seedance/refine-prompt', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt: text }),
+    })
+    if (!res.ok) return null
+    return res.json()
+  }
+
+  const handleGenerateClick = async () => {
+    const textToCheck = mode === 'multi' ? sceneScript : mode === 'text' ? prompt : null
+
+    if (textToCheck && textToCheck.trim()) {
+      setCheckingPrompt(true)
+      setError('')
+      try {
+        const review = await checkPromptClarity(textToCheck)
+        setCheckingPrompt(false)
+        if (review && review.clear === false && review.improvedPrompt && review.improvedPrompt.trim() !== textToCheck.trim()) {
+          setPromptReview({ original: textToCheck, issues: review.issues || [], improvedPrompt: review.improvedPrompt })
+          return // wait for the customer's choice — don't generate yet
+        }
+      } catch (e) {
+        setCheckingPrompt(false)
+        // If the clarity check itself fails, don't block generation — proceed normally.
+      }
+    }
+
+    handleGenerate()
+  }
+
+  const resolvePromptReview = (useSuggested) => {
+    const chosenText = useSuggested ? promptReview.improvedPrompt : promptReview.original
+    setPromptReview(null)
+    handleGenerate(chosenText)
   }
 
   const MODES = [
@@ -850,6 +1119,20 @@ export default function Home() {
                 </div>
 
                 <RiskWarningBanner text={sceneScript} />
+                <MultiActionWarning scenesArray={parseScenes(sceneScript)} />
+
+                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '10px', cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={reviewEachScene}
+                    onChange={(e) => setReviewEachScene(e.target.checked)}
+                    disabled={generating}
+                    style={{ width: '14px', height: '14px', accentColor: '#8b5cf6' }}
+                  />
+                  <span style={{ fontSize: '11.5px', color: '#c8c0ff' }}>
+                    Review each scene before continuing <span style={{ color: '#9080cc' }}>(recommended — avoids wasting credits on later scenes)</span>
+                  </span>
+                </label>
 
                 {generating && (
                   <button onClick={handleCancel} style={{ marginTop: '8px', width: '100%', padding: '8px', background: 'rgba(239,68,68,0.1)', border: '1px solid rgba(239,68,68,0.3)', borderRadius: '8px', color: '#fca5a5', fontSize: '12px', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}>
@@ -861,8 +1144,63 @@ export default function Home() {
               <div style={{ padding: '14px 14px 0' }}>
                 <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
                   <span style={{ fontSize: '10px', fontWeight: 700, color: '#9080cc', textTransform: 'uppercase', letterSpacing: '1px' }}>Prompt</span>
-                  <span style={{ fontSize: '10px', color: '#9080cc' }}>Tips</span>
+                  <button
+                    onClick={() => setShowPromptBuilder((v) => !v)}
+                    style={{ fontSize: '10px', color: '#c4b5fd', background: 'none', border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 700 }}
+                  >
+                    {showPromptBuilder ? '✕ Close Builder' : '🧩 Prompt Builder'}
+                  </button>
                 </div>
+
+                {showPromptBuilder && (
+                  <div style={{ background: 'rgba(15,10,46,0.8)', border: '1px solid rgba(139,92,246,0.2)', borderRadius: '10px', padding: '12px', marginBottom: '10px' }}>
+                    <p style={{ fontSize: '10.5px', color: '#9080cc', marginBottom: '10px', lineHeight: 1.4 }}>
+                      Fill these in and we'll compose a clear, well-formed prompt — one clear subject and one clear action works far better than a long freeform description.
+                    </p>
+                    <div style={{ marginBottom: '8px' }}>
+                      <label style={{ fontSize: '10px', color: '#c4b5fd', fontWeight: 600, display: 'block', marginBottom: '4px' }}>Subject / Character</label>
+                      <input value={builderSubject} onChange={(e) => setBuilderSubject(e.target.value)} placeholder="e.g. A young woman in a red hoodie" style={{ width: '100%', background: 'rgba(15,10,46,0.6)', border: '1px solid rgba(139,92,246,0.2)', borderRadius: '8px', color: '#fff', fontSize: '12px', padding: '8px 10px', fontFamily: 'inherit', outline: 'none' }} />
+                    </div>
+                    <div style={{ marginBottom: '8px' }}>
+                      <label style={{ fontSize: '10px', color: '#c4b5fd', fontWeight: 600, display: 'block', marginBottom: '4px' }}>Action <span style={{ opacity: 0.6, fontWeight: 400 }}>(just one)</span></label>
+                      <input value={builderAction} onChange={(e) => setBuilderAction(e.target.value)} placeholder="e.g. smiles and holds up a coffee cup" style={{ width: '100%', background: 'rgba(15,10,46,0.6)', border: '1px solid rgba(139,92,246,0.2)', borderRadius: '8px', color: '#fff', fontSize: '12px', padding: '8px 10px', fontFamily: 'inherit', outline: 'none' }} />
+                    </div>
+                    <div style={{ marginBottom: '8px' }}>
+                      <label style={{ fontSize: '10px', color: '#c4b5fd', fontWeight: 600, display: 'block', marginBottom: '4px' }}>Setting</label>
+                      <input value={builderSetting} onChange={(e) => setBuilderSetting(e.target.value)} placeholder="e.g. a bright modern kitchen" style={{ width: '100%', background: 'rgba(15,10,46,0.6)', border: '1px solid rgba(139,92,246,0.2)', borderRadius: '8px', color: '#fff', fontSize: '12px', padding: '8px 10px', fontFamily: 'inherit', outline: 'none' }} />
+                    </div>
+                    <div style={{ display: 'flex', gap: '8px', marginBottom: '10px' }}>
+                      <div style={{ flex: 1 }}>
+                        <label style={{ fontSize: '10px', color: '#c4b5fd', fontWeight: 600, display: 'block', marginBottom: '4px' }}>Camera</label>
+                        <select value={builderCamera} onChange={(e) => setBuilderCamera(e.target.value)} style={{ width: '100%', background: 'rgba(15,10,46,0.6)', border: '1px solid rgba(139,92,246,0.2)', borderRadius: '8px', color: '#fff', fontSize: '12px', padding: '8px 10px', fontFamily: 'inherit', outline: 'none' }}>
+                          <option value="">Default</option>
+                          <option value="Static camera shot">Static</option>
+                          <option value="Slow pan across the scene">Slow pan</option>
+                          <option value="Slow zoom in">Slow zoom in</option>
+                          <option value="Handheld camera movement">Handheld</option>
+                          <option value="Drone aerial shot">Drone / aerial</option>
+                        </select>
+                      </div>
+                      <div style={{ flex: 1 }}>
+                        <label style={{ fontSize: '10px', color: '#c4b5fd', fontWeight: 600, display: 'block', marginBottom: '4px' }}>Style</label>
+                        <input value={builderStyle} onChange={(e) => setBuilderStyle(e.target.value)} placeholder="e.g. cinematic, warm lighting" style={{ width: '100%', background: 'rgba(15,10,46,0.6)', border: '1px solid rgba(139,92,246,0.2)', borderRadius: '8px', color: '#fff', fontSize: '12px', padding: '8px 10px', fontFamily: 'inherit', outline: 'none' }} />
+                      </div>
+                    </div>
+                    {composeStructuredPrompt() && (
+                      <div style={{ fontSize: '11px', color: '#9080cc', marginBottom: '8px', lineHeight: 1.5 }}>
+                        <strong style={{ color: '#c8c0ff' }}>Preview:</strong> {composeStructuredPrompt()}
+                      </div>
+                    )}
+                    <button
+                      onClick={applyStructuredPrompt}
+                      disabled={!builderSubject.trim() && !builderAction.trim()}
+                      style={{ width: '100%', padding: '9px', borderRadius: '8px', border: 'none', background: 'rgba(139,92,246,0.3)', color: '#fff', fontSize: '12px', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit', opacity: (!builderSubject.trim() && !builderAction.trim()) ? 0.4 : 1 }}
+                    >
+                      ✨ Use This Prompt
+                    </button>
+                  </div>
+                )}
+
                 <div style={{ background: 'rgba(15,10,46,0.8)', border: '1px solid rgba(139,92,246,0.2)', borderRadius: '10px' }}>
                   <textarea
                     value={prompt}
@@ -898,8 +1236,46 @@ export default function Home() {
               {videoUrl && <span style={{ fontSize: '10px', color: '#9080cc' }}>Ready</span>}
             </div>
 
-            {videoUrl ? (
+            {awaitingApproval && pendingSceneIndex !== null ? (
               <div style={{ padding: '14px' }}>
+                <div style={{ background: 'rgba(251,191,36,0.08)', border: '1px solid rgba(251,191,36,0.3)', borderRadius: '8px', padding: '9px 12px', marginBottom: '10px', fontSize: '12px', color: '#fde68a', fontWeight: 600 }}>
+                  Scene {pendingSceneIndex + 1} of {sceneResultsRef.current.length} is ready — review before the next scene generates
+                </div>
+                <video
+                  src={sceneResults.find((s) => s.index === pendingSceneIndex)?.url}
+                  controls autoPlay loop
+                  style={{ width: '100%', display: 'block', borderRadius: '10px', background: '#000' }}
+                />
+                <div style={{ display: 'flex', gap: '8px', marginTop: '10px' }}>
+                  <button
+                    onClick={approveSceneAndContinue}
+                    style={{ flex: 1, padding: '11px', borderRadius: '9px', border: 'none', background: '#34d399', color: '#0f0a2e', fontSize: '13px', fontWeight: 800, cursor: 'pointer', fontFamily: 'inherit' }}
+                  >
+                    ✓ Approve & Continue
+                  </button>
+                  <button
+                    onClick={regeneratePendingScene}
+                    style={{ flex: 1, padding: '11px', borderRadius: '9px', border: '1px solid rgba(139,92,246,0.4)', background: 'rgba(139,92,246,0.15)', color: '#c4b5fd', fontSize: '13px', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}
+                  >
+                    ↻ Regenerate This Scene
+                  </button>
+                </div>
+                {pendingSceneIndex + 1 >= sceneResultsRef.current.length && (
+                  <p style={{ fontSize: '10.5px', color: '#9080cc', marginTop: '8px' }}>This is the last scene — approving will stitch the full video together.</p>
+                )}
+              </div>
+            ) : videoUrl ? (
+              <div style={{ padding: '14px' }}>
+                {(qaChecking || qaResult) && (
+                  <div style={{
+                    marginBottom: '10px', padding: '9px 12px', borderRadius: '8px', fontSize: '11.5px',
+                    background: qaChecking ? 'rgba(139,92,246,0.08)' : qaResult?.matches === false ? 'rgba(251,191,36,0.08)' : 'rgba(52,211,153,0.08)',
+                    border: qaChecking ? '1px solid rgba(139,92,246,0.25)' : qaResult?.matches === false ? '1px solid rgba(251,191,36,0.3)' : '1px solid rgba(52,211,153,0.25)',
+                    color: qaChecking ? '#c4b5fd' : qaResult?.matches === false ? '#fde68a' : '#6ee7b7',
+                  }}>
+                    {qaChecking ? '◐ Checking if the video matches your prompt...' : qaResult?.matches === false ? `⚠ AI QA note: ${qaResult.note || 'This may not fully match your prompt — worth a look before using it.'}` : `✓ Looks consistent with your prompt${qaResult?.note ? ` — ${qaResult.note}` : ''}`}
+                  </div>
+                )}
                 <div style={{ position: 'relative', borderRadius: '10px', overflow: 'hidden' }}>
                   <video src={videoUrl} controls autoPlay loop style={{ width: '100%', display: 'block', borderRadius: '10px', background: '#000' }} />
                   {showSafeZones && ratio === '9:16' && (
@@ -1066,6 +1442,37 @@ export default function Home() {
               </div>
             </div>
 
+            {promptReview && (
+              <div style={{ background: 'rgba(139,92,246,0.08)', border: '1px solid rgba(139,92,246,0.35)', borderRadius: '12px', padding: '14px' }}>
+                <div style={{ fontSize: '11px', fontWeight: 700, color: '#c4b5fd', marginBottom: '8px' }}>
+                  ✨ This prompt could be clearer — here's why:
+                </div>
+                <ul style={{ margin: '0 0 10px', paddingLeft: '16px' }}>
+                  {promptReview.issues.map((issue, i) => (
+                    <li key={i} style={{ fontSize: '11px', color: '#c8c0ff', marginBottom: '3px' }}>{issue}</li>
+                  ))}
+                </ul>
+                <div style={{ fontSize: '10px', fontWeight: 700, color: '#9080cc', textTransform: 'uppercase', letterSpacing: '.7px', marginBottom: '4px' }}>Suggested rewrite</div>
+                <div style={{ background: 'rgba(15,10,46,0.7)', border: '1px solid rgba(139,92,246,0.2)', borderRadius: '8px', padding: '9px 11px', fontSize: '12px', color: '#fff', lineHeight: 1.5, marginBottom: '10px' }}>
+                  {promptReview.improvedPrompt}
+                </div>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button
+                    onClick={() => resolvePromptReview(true)}
+                    style={{ flex: 1, padding: '9px', borderRadius: '8px', border: 'none', background: '#8b5cf6', color: '#fff', fontSize: '12px', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}
+                  >
+                    Use Suggested
+                  </button>
+                  <button
+                    onClick={() => resolvePromptReview(false)}
+                    style={{ flex: 1, padding: '9px', borderRadius: '8px', border: '1px solid rgba(139,92,246,0.3)', background: 'transparent', color: '#c8c0ff', fontSize: '12px', fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}
+                  >
+                    Keep My Original
+                  </button>
+                </div>
+              </div>
+            )}
+
             {!isSignedIn && sessionStatus !== 'loading' && (
               <div style={{ padding: '9px 12px', background: 'rgba(139,92,246,0.1)', border: '1px solid rgba(139,92,246,0.3)', borderRadius: '10px', color: '#c4b5fd', fontSize: '12px', textAlign: 'center' }}>
                 Sign in above to start generating videos.
@@ -1073,17 +1480,24 @@ export default function Home() {
             )}
 
             <button
-              onClick={handleGenerate}
-              disabled={generating || referenceUploading || !isSignedIn}
+              onClick={handleGenerateClick}
+              disabled={generating || checkingPrompt || referenceUploading || !isSignedIn || awaitingApproval}
               style={{
-                display: 'flex', width: '100%', height: '50px', background: (generating || !isSignedIn) ? '#5b3fa0' : 'linear-gradient(135deg,#8b5cf6,#7c3aed)', border: 'none', borderRadius: '13px', color: '#fff', fontSize: '15px', fontWeight: 800, alignItems: 'center', justifyContent: 'center', gap: '7px', cursor: (generating || !isSignedIn) ? 'not-allowed' : 'pointer', fontFamily: 'inherit', boxShadow: '0 0 28px rgba(139,92,246,0.4)', opacity: !isSignedIn ? 0.6 : 1,
+                display: 'flex', width: '100%', height: '50px', background: (generating || checkingPrompt || !isSignedIn || awaitingApproval) ? '#5b3fa0' : 'linear-gradient(135deg,#8b5cf6,#7c3aed)', border: 'none', borderRadius: '13px', color: '#fff', fontSize: '15px', fontWeight: 800, alignItems: 'center', justifyContent: 'center', gap: '7px', cursor: (generating || checkingPrompt || !isSignedIn || awaitingApproval) ? 'not-allowed' : 'pointer', fontFamily: 'inherit', boxShadow: '0 0 28px rgba(139,92,246,0.4)', opacity: !isSignedIn ? 0.6 : 1,
               }}
             >
-              {generating ? (
+              {checkingPrompt ? (
+                <>
+                  <span style={{ width: '14px', height: '14px', border: '2px solid rgba(255,255,255,0.4)', borderTopColor: '#fff', borderRadius: '50%', display: 'inline-block', animation: 'spin 0.8s linear infinite' }} />
+                  Reviewing your prompt...
+                </>
+              ) : generating ? (
                 <>
                   <span style={{ width: '14px', height: '14px', border: '2px solid rgba(255,255,255,0.4)', borderTopColor: '#fff', borderRadius: '50%', display: 'inline-block', animation: 'spin 0.8s linear infinite' }} />
                   {statusText || 'Generating...'}
                 </>
+              ) : awaitingApproval ? (
+                'Review the scene above to continue'
               ) : (
                 <>
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="white"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
