@@ -1366,6 +1366,11 @@ export default function Home() {
                         </button>
                       )}
                     </div>
+                    {s.status === 'failed' && s.error && (
+                      <div style={{ fontSize: '9px', color: '#fca5a5', marginTop: '2px', lineHeight: '1.3', wordBreak: 'break-word' }}>
+                        {s.error}
+                      </div>
+                    )}
                   </div>
                 ))}
               </div>
