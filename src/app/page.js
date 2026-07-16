@@ -718,12 +718,38 @@ export default function Home() {
   }
 
   // Builds the final prompt for a scene, including Character Bible + reference image tag.
-  const buildScenePrompt = (sceneText) => {
+  //
+  // NEW: Smart Character Bible Trimming — if the Character Bible is long
+  // (i.e. likely a full multi-character movie bible, not a single short
+  // product description), it's trimmed down to just the characters that
+  // appear in THIS scene before being sent to the video model. This is
+  // what stops a 5-villain + dragon + eggs bible from being force-fed into
+  // an 8-second establishing shot that only needs one villain. Falls back
+  // to the untouched full bible if trimming fails or isn't needed.
+  const BIBLE_TRIM_THRESHOLD = 400 // chars — below this, just send it as-is
+  const trimBibleForScene = async (bible, sceneText) => {
+    if (bible.trim().length <= BIBLE_TRIM_THRESHOLD) return bible.trim()
+    try {
+      const res = await fetch('/api/seedance/relevant-bible', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ characterBible: bible, sceneText }),
+      })
+      if (!res.ok) return bible.trim()
+      const data = await res.json()
+      return typeof data.relevantBible === 'string' && data.relevantBible ? data.relevantBible : bible.trim()
+    } catch (e) {
+      return bible.trim()
+    }
+  }
+
+  const buildScenePrompt = async (sceneText) => {
     const readyReferenceImages = referenceImages.filter((img) => img.url).map((img) => img.url)
     const referenceTag = readyReferenceImages.length > 0
       ? `@Image1 shows exactly what the product/character looks like — keep it visually identical. `
       : ''
-    const finalPrompt = referenceTag + (characterBible.trim() ? `${characterBible.trim()}. ${sceneText}` : sceneText)
+    const trimmedBible = characterBible.trim() ? await trimBibleForScene(characterBible, sceneText) : ''
+    const finalPrompt = referenceTag + (trimmedBible ? `${trimmedBible}. ${sceneText}` : sceneText)
     return { finalPrompt, readyReferenceImages }
   }
 
@@ -734,7 +760,9 @@ export default function Home() {
 
   const runSingleScene = async (index, sceneText) => {
     updateSceneResult(index, { status: 'generating', error: null })
-    const { finalPrompt, readyReferenceImages } = buildScenePrompt(sceneText)
+    setStatusText(characterBible.trim().length > BIBLE_TRIM_THRESHOLD ? `Scene ${index + 1}: matching relevant characters...` : `Scene ${index + 1}: generating...`)
+    const { finalPrompt, readyReferenceImages } = await buildScenePrompt(sceneText)
+    setStatusText(`Scene ${index + 1}: generating...`)
     const sceneDuration = audioOn ? 8 : 10
     try {
       const { urls, seed } = await generateOneClip(finalPrompt, {
