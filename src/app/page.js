@@ -9,43 +9,6 @@ import { scanForRiskyContent } from '@/lib/contentRiskCheck'
 // (based on real failures we've seen: smoking, police chases, weapons, etc.).
 // This does NOT block generation — it's a heads-up so the customer can decide
 // whether to reword before spending credits on a scene that might fail.
-// NEW: Multi-action scene detector — flags scenes that pack more than one
-// sequential action into a single clip (a common cause of the video model
-// "losing the plot" mid-scene). Non-blocking — just nudges toward splitting.
-const SEQUENCE_MARKERS = [
-  'then', 'after that', 'next,', 'afterwards', 'once she', 'once he',
-  'phir', 'uske baad', 'us ke baad', 'aur phir', 'ke baad',
-]
-function detectMultiActionScenes(scenesArray) {
-  return scenesArray
-    .map((text, index) => {
-      const lower = text.toLowerCase()
-      const foundMarkers = SEQUENCE_MARKERS.filter((m) => lower.includes(m))
-      // Heuristic 2: 3+ comma-separated clauses often means 3+ different actions crammed in.
-      const clauseCount = text.split(',').length
-      if (foundMarkers.length > 0 || clauseCount >= 4) {
-        return { index, reason: foundMarkers.length > 0 ? `contains a sequence word ("${foundMarkers[0]}")` : 'has several comma-separated actions' }
-      }
-      return null
-    })
-    .filter(Boolean)
-}
-
-function MultiActionWarning({ scenesArray }) {
-  const flagged = detectMultiActionScenes(scenesArray)
-  if (flagged.length === 0) return null
-  return (
-    <div style={{ margin: '8px 0', padding: '10px 12px', background: 'rgba(251,191,36,0.08)', border: '1px solid rgba(251,191,36,0.3)', borderRadius: '8px' }}>
-      <div style={{ fontSize: '11px', fontWeight: 700, color: '#fbbf24', marginBottom: '6px' }}>⚠ Some scenes may be doing too much at once</div>
-      {flagged.map((f) => (
-        <div key={f.index} style={{ fontSize: '11px', color: '#fde68a', marginBottom: '4px' }}>
-          Scene {f.index + 1} {f.reason} — AI video models handle one clear action per scene much better. Consider splitting it into two [SCENE] blocks.
-        </div>
-      ))}
-    </div>
-  )
-}
-
 function RiskWarningBanner({ text }) {
   const risks = scanForRiskyContent(text)
   if (risks.length === 0) return null
@@ -115,6 +78,13 @@ export default function Home() {
   // AI-suggested clearer version and picks one before any credits are spent.
   const [checkingPrompt, setCheckingPrompt] = useState(false)
   const [promptReview, setPromptReview] = useState(null) // { original, issues, improvedPrompt }
+
+  // NEW: AI Smart Scene Split — when a customer pastes a script without
+  // [SCENE N] tags (e.g. a GPT-written screenplay with headers, dialogue,
+  // "Visual Prompt:" labels, etc.), an LLM reads the whole thing and splits
+  // it into clean per-scene prompts automatically. Runs before generation,
+  // fails open (falls back to treating the text as one scene) on any error.
+  const [autoSplitting, setAutoSplitting] = useState(false)
 
   // NEW: Post-generation AI QA check — after the final video is ready, grabs a
   // frame and asks a vision model whether it looks consistent with the prompt.
@@ -270,6 +240,26 @@ export default function Home() {
     }
     const trimmed = text.trim()
     return trimmed ? [trimmed] : []
+  }
+
+  // NEW: Calls the AI scene-splitter for scripts that don't use [SCENE N]
+  // tags. Returns an array of clean scene prompts, or null if the split
+  // wasn't useful/failed (caller should fall back to treating the text as
+  // one scene in that case — never throws).
+  const smartSplitScenes = async (text) => {
+    try {
+      const res = await fetch('/api/seedance/smart-scenes', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ script: text }),
+      })
+      if (!res.ok) return null
+      const data = await res.json()
+      if (Array.isArray(data.scenes) && data.scenes.length > 1) return data.scenes
+      return null
+    } catch (e) {
+      return null
+    }
   }
 
   const stopPolling = () => {
@@ -803,13 +793,31 @@ export default function Home() {
 
   const handleGenerateMultiScene = async (scriptOverride) => {
     const scriptToUse = scriptOverride ?? sceneScript
-    const scenes = parseScenes(scriptToUse)
+    let scenes = parseScenes(scriptToUse)
+    let finalScript = scriptOverride ?? null
+
+    // No [SCENE N] tags found and there's a meaningful amount of text —
+    // likely a pasted script in some other format (screenplay, GPT output,
+    // etc). Ask the AI splitter to find the real scene boundaries instead
+    // of treating the whole thing as one clip.
+    const hasTags = /\[SCENE\s*\d+\]/i.test(scriptToUse)
+    if (!hasTags && scriptToUse.trim().length > 300) {
+      setAutoSplitting(true)
+      setStatusText('Detecting scenes in your script...')
+      const split = await smartSplitScenes(scriptToUse)
+      setAutoSplitting(false)
+      setStatusText('')
+      if (split) {
+        scenes = split
+        finalScript = split.map((s, i) => `[SCENE ${i + 1}]\n${s}`).join('\n\n')
+      }
+    }
 
     if (scenes.length === 0) {
       setError('Please write at least one scene.')
       return
     }
-    if (scriptOverride) setSceneScript(scriptOverride)
+    if (finalScript) setSceneScript(finalScript)
 
     setError('')
     setVideoUrl(null)
@@ -1104,7 +1112,7 @@ export default function Home() {
                 </div>
 
                 <div style={{ fontSize: '10px', fontWeight: 700, color: '#9080cc', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '6px' }}>
-                  Scenes <span style={{ opacity: 0.6, textTransform: 'none', fontWeight: 400 }}>(use [SCENE 1], [SCENE 2]... tags to create multiple scenes — each is {audioOn ? '8s' : '10s'}. Without tags, your whole text is generated as ONE scene.)</span>
+                  Scenes <span style={{ opacity: 0.6, textTransform: 'none', fontWeight: 400 }}>(use [SCENE 1], [SCENE 2]... tags, or just paste any script — AI will auto-detect the scenes for you. Each scene is {audioOn ? '8s' : '10s'}.)</span>
                 </div>
                 <div style={{ background: 'rgba(15,10,46,0.8)', border: '1px solid rgba(139,92,246,0.2)', borderRadius: '10px' }}>
                   <textarea
@@ -1121,7 +1129,6 @@ export default function Home() {
                 </div>
 
                 <RiskWarningBanner text={sceneScript} />
-                <MultiActionWarning scenesArray={parseScenes(sceneScript)} />
 
                 <label style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '10px', cursor: 'pointer' }}>
                   <input
@@ -1488,15 +1495,20 @@ export default function Home() {
 
             <button
               onClick={handleGenerateClick}
-              disabled={generating || checkingPrompt || referenceUploading || !isSignedIn || awaitingApproval}
+              disabled={generating || checkingPrompt || autoSplitting || referenceUploading || !isSignedIn || awaitingApproval}
               style={{
-                display: 'flex', width: '100%', height: '50px', background: (generating || checkingPrompt || !isSignedIn || awaitingApproval) ? '#5b3fa0' : 'linear-gradient(135deg,#8b5cf6,#7c3aed)', border: 'none', borderRadius: '13px', color: '#fff', fontSize: '15px', fontWeight: 800, alignItems: 'center', justifyContent: 'center', gap: '7px', cursor: (generating || checkingPrompt || !isSignedIn || awaitingApproval) ? 'not-allowed' : 'pointer', fontFamily: 'inherit', boxShadow: '0 0 28px rgba(139,92,246,0.4)', opacity: !isSignedIn ? 0.6 : 1,
+                display: 'flex', width: '100%', height: '50px', background: (generating || checkingPrompt || autoSplitting || !isSignedIn || awaitingApproval) ? '#5b3fa0' : 'linear-gradient(135deg,#8b5cf6,#7c3aed)', border: 'none', borderRadius: '13px', color: '#fff', fontSize: '15px', fontWeight: 800, alignItems: 'center', justifyContent: 'center', gap: '7px', cursor: (generating || checkingPrompt || autoSplitting || !isSignedIn || awaitingApproval) ? 'not-allowed' : 'pointer', fontFamily: 'inherit', boxShadow: '0 0 28px rgba(139,92,246,0.4)', opacity: !isSignedIn ? 0.6 : 1,
               }}
             >
               {checkingPrompt ? (
                 <>
                   <span style={{ width: '14px', height: '14px', border: '2px solid rgba(255,255,255,0.4)', borderTopColor: '#fff', borderRadius: '50%', display: 'inline-block', animation: 'spin 0.8s linear infinite' }} />
                   Reviewing your prompt...
+                </>
+              ) : autoSplitting ? (
+                <>
+                  <span style={{ width: '14px', height: '14px', border: '2px solid rgba(255,255,255,0.4)', borderTopColor: '#fff', borderRadius: '50%', display: 'inline-block', animation: 'spin 0.8s linear infinite' }} />
+                  Detecting scenes in your script...
                 </>
               ) : generating ? (
                 <>
