@@ -262,6 +262,41 @@ export default function Home() {
     }
   }
 
+  // NEW: Live auto-detect — runs the AI scene splitter automatically ~1.2s
+  // after the customer stops pasting/typing an untagged script, instead of
+  // waiting for Generate to be clicked. This keeps the "X scenes" live
+  // counter accurate right away instead of showing a stale "1 scene" until
+  // generation starts. Self-terminating: once tags are inserted, hasTags
+  // becomes true and this effect no-ops on the next run. autoSplitTriedRef
+  // stops it from retrying the exact same text over and over if the split
+  // genuinely fails (e.g. the model decided it's really one scene).
+  const autoSplitDebounceRef = useRef(null)
+  const autoSplitTriedRef = useRef(new Set())
+  useEffect(() => {
+    if (mode !== 'multi') return
+    const hasTags = /\[SCENE\s*\d+\]/i.test(sceneScript)
+    if (hasTags) return
+    const trimmed = sceneScript.trim()
+    if (trimmed.length <= 300) return
+    if (autoSplitTriedRef.current.has(trimmed)) return
+
+    if (autoSplitDebounceRef.current) clearTimeout(autoSplitDebounceRef.current)
+    autoSplitDebounceRef.current = setTimeout(async () => {
+      autoSplitTriedRef.current.add(trimmed)
+      setAutoSplitting(true)
+      const split = await smartSplitScenes(trimmed)
+      setAutoSplitting(false)
+      if (split) {
+        const tagged = split.map((s, i) => `[SCENE ${i + 1}]\n${s}`).join('\n\n')
+        setSceneScript(tagged)
+      }
+    }, 1200)
+
+    return () => {
+      if (autoSplitDebounceRef.current) clearTimeout(autoSplitDebounceRef.current)
+    }
+  }, [sceneScript, mode])
+
   const stopPolling = () => {
     if (pollTimer.current) {
       clearInterval(pollTimer.current)
@@ -1122,8 +1157,10 @@ export default function Home() {
                     style={{ width: '100%', background: 'transparent', border: 'none', outline: 'none', color: '#fff', fontSize: '13px', lineHeight: 1.65, resize: 'none', padding: '11px 12px', minHeight: '120px', fontFamily: 'inherit' }}
                   />
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 12px', borderTop: '1px solid rgba(139,92,246,0.15)' }}>
-                    <span style={{ fontSize: '11px', color: '#9080cc' }}>
-                      {parseScenes(sceneScript).length} scenes · ~{parseScenes(sceneScript).length * duration}s total
+                    <span style={{ fontSize: '11px', color: autoSplitting ? '#fbbf24' : '#9080cc' }}>
+                      {autoSplitting
+                        ? '✨ Detecting scenes in your script...'
+                        : `${parseScenes(sceneScript).length} scenes · ~${parseScenes(sceneScript).length * (audioOn ? 8 : 10)}s total`}
                     </span>
                   </div>
                 </div>
