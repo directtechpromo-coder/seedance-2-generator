@@ -4,7 +4,7 @@ import { authOptions } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
 import { AIService } from "@/lib/services/ai";
 
-export const maxDuration = 120; // seconds — needed for Clip A/B chaining and scene-to-scene frame chaining
+export const maxDuration = 300; // seconds — needed for Clip A/B chaining (Veo clip A can take 2-3 min on FAL before Part B can be submitted)
 
 // NEW: creates a Creation row (or one per clip, for split/multi-clip results) so
 // generation history and credit deduction can be tracked. Best-effort — logging
