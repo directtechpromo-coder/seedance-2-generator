@@ -882,6 +882,27 @@ export default function Home() {
     }
     if (finalScript) setSceneScript(finalScript)
 
+    // Resume support: if the main Generate button is clicked again after a
+    // mid-script failure (instead of using the small per-scene Retry link),
+    // and the script is unchanged, keep whatever scenes already succeeded
+    // and resume from the first one that isn't done yet — instead of
+    // wiping everything and re-charging credits for already-approved scenes.
+    const existing = sceneResultsRef.current
+    const sameScript = existing.length === scenes.length && existing.every((s, i) => s.text === scenes[i])
+    if (sameScript && existing.some((s) => s.status === 'done')) {
+      const firstNotDone = existing.findIndex((s) => s.status !== 'done')
+      if (firstNotDone === -1) {
+        await tryFinalizeIfAllDone()
+        return
+      }
+      setError('')
+      cancelRef.current = false
+      setAwaitingApproval(false)
+      setPendingSceneIndex(null)
+      await generateNextScene(firstNotDone)
+      return
+    }
+
     setError('')
     setVideoUrl(null)
     setVideoParts(null)
