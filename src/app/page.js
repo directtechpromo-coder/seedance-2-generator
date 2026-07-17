@@ -760,12 +760,15 @@ export default function Home() {
   }
 
   const buildScenePrompt = async (sceneText) => {
-    const readyReferenceImages = referenceImages.filter((img) => img.url).map((img) => img.url)
-    const referenceTag = readyReferenceImages.length > 0
-      ? `@Image1 shows exactly what the product/character looks like — keep it visually identical. `
-      : ''
+    // IMPORTANT: Multi-scene movie generation ALWAYS uses text-to-video mode,
+    // never reference-images mode — even if the user has reference images uploaded
+    // in the UI. The reference-images mode (Seedance 2.0) caps at ~6s and ignores
+    // the duration param, which breaks the 15s Part A+B split system entirely.
+    // Reference images in multi-scene are handled via the Character Bible text
+    // description instead (which is what trimBibleForScene produces).
+    const readyReferenceImages = []
     const trimmedBible = characterBible.trim() ? await trimBibleForScene(characterBible, sceneText) : ''
-    const finalPrompt = referenceTag + (trimmedBible ? `${trimmedBible}. ${sceneText}` : sceneText)
+    const finalPrompt = trimmedBible ? `${trimmedBible}. ${sceneText}` : sceneText
     return { finalPrompt, readyReferenceImages }
   }
 
@@ -787,8 +790,15 @@ export default function Home() {
         imageUrls: readyReferenceImages,
       })
       if (multiSceneSeedRef.current === undefined) multiSceneSeedRef.current = seed
-      const rawUrl = urls[urls.length - 1]
-      const blobUrl = await fetchAsBlob(rawUrl)
+      let finalUrl
+      if (urls.length > 1) {
+        // Part A + Part B returned — stitch them into one clip before storing
+        setStatusText(`Scene ${index + 1}: stitching parts together...`)
+        finalUrl = await stitchClips(urls)
+      } else {
+        finalUrl = urls[0]
+      }
+      const blobUrl = await fetchAsBlob(finalUrl)
       updateSceneResult(index, { status: 'done', url: blobUrl })
       return true
     } catch (e) {
