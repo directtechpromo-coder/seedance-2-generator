@@ -340,6 +340,22 @@ export default function Home() {
       }, 3000)
     })
 
+  // NEW: Converts an external video URL (FAL CDN, etc.) into a local blob URL
+  // so the browser's <video> player can load it without CORS restrictions.
+  // Falls back to the original URL silently if fetch fails.
+  const fetchAsBlob = async (url) => {
+    if (!url) return url
+    if (url.startsWith('blob:')) return url // already a blob, no need to re-fetch
+    try {
+      const res = await fetch(url)
+      if (!res.ok) return url
+      const blob = await res.blob()
+      return URL.createObjectURL(blob)
+    } catch {
+      return url
+    }
+  }
+
   // UPDATED: now accepts { seed, previousVideoUrl } so scenes can chain visually,
   // and returns { urls, seed } so the caller can capture the seed for the next scene.
   const generateOneClip = async (promptText, chainOptions = {}) => {
@@ -771,7 +787,9 @@ export default function Home() {
         imageUrls: readyReferenceImages,
       })
       if (multiSceneSeedRef.current === undefined) multiSceneSeedRef.current = seed
-      updateSceneResult(index, { status: 'done', url: urls[urls.length - 1] })
+      const rawUrl = urls[urls.length - 1]
+      const blobUrl = await fetchAsBlob(rawUrl)
+      updateSceneResult(index, { status: 'done', url: blobUrl })
       return true
     } catch (e) {
       updateSceneResult(index, { status: 'failed', error: e.message || 'Generation failed' })
