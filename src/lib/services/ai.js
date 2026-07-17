@@ -280,6 +280,7 @@ async function generate(userId, options = {}) {
   const { modelKey, modeKey } = resolveModelAndMode({ generate_audio, mode });
   const totalDuration = Math.min(Math.max(Number(duration) || 5, 1), 15);
   const maxPerClip = modelKey === "veo" ? VEO_MAX_DURATION : WAN_MAX_DURATION;
+  console.log(`[GENERATE] duration param received: ${JSON.stringify(duration)} | totalDuration: ${totalDuration} | maxPerClip: ${maxPerClip} | modelKey: ${modelKey} | will split: ${totalDuration > maxPerClip}`);
   const seed = incomingSeed !== undefined ? incomingSeed : generateSeed(); // reuse if passed in, else generate fresh
 
   // Case 1: fits in a single clip -> single submission.
