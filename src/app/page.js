@@ -763,7 +763,7 @@ export default function Home() {
     setStatusText(characterBible.trim().length > BIBLE_TRIM_THRESHOLD ? `Scene ${index + 1}: matching relevant characters...` : `Scene ${index + 1}: generating...`)
     const { finalPrompt, readyReferenceImages } = await buildScenePrompt(sceneText)
     setStatusText(`Scene ${index + 1}: generating...`)
-    const sceneDuration = audioOn ? 8 : 10
+    const sceneDuration = 15 // 15 sec per scene (server auto-splits into Part A + Part B via last-frame chaining)
     try {
       const { urls, seed } = await generateOneClip(finalPrompt, {
         seed: multiSceneSeedRef.current,
@@ -1019,7 +1019,7 @@ export default function Home() {
     { id: 'multi', title: 'Multi-Scene Story', subtitle: 'Create and stitch multiple scenes', icon: 'multi', badge: 'NEW' },
   ]
 
-  const estCredits = estimateCredits(resolution, mode === 'multi' ? (audioOn ? 8 : 10) : duration, audioOn)
+  const estCredits = estimateCredits(resolution, mode === 'multi' ? 15 : duration, audioOn)
 
   return (
     <main style={{ background: '#0f0a2e', minHeight: '100vh', padding: '24px' }}>
@@ -1196,7 +1196,7 @@ export default function Home() {
                 </div>
 
                 <div style={{ fontSize: '10px', fontWeight: 700, color: '#9080cc', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '6px' }}>
-                  Scenes <span style={{ opacity: 0.6, textTransform: 'none', fontWeight: 400 }}>(use [SCENE 1], [SCENE 2]... tags, or just paste any script — AI will auto-detect the scenes for you. Each scene is {audioOn ? '8s' : '10s'}.)</span>
+                  Scenes <span style={{ opacity: 0.6, textTransform: 'none', fontWeight: 400 }}>(use [SCENE 1], [SCENE 2]... tags, or just paste any script — AI will auto-detect the scenes for you. Each scene is 15s.)</span>
                 </div>
                 <div style={{ background: 'rgba(15,10,46,0.8)', border: '1px solid rgba(139,92,246,0.2)', borderRadius: '10px' }}>
                   <textarea
@@ -1209,7 +1209,7 @@ export default function Home() {
                     <span style={{ fontSize: '11px', color: autoSplitting ? '#fbbf24' : '#9080cc' }}>
                       {autoSplitting
                         ? '✨ Detecting scenes in your script...'
-                        : `${parseScenes(sceneScript).length} scenes · ~${parseScenes(sceneScript).length * (audioOn ? 8 : 10)}s total`}
+                        : `${parseScenes(sceneScript).length} scenes · ~${parseScenes(sceneScript).length * 15}s total`}
                     </span>
                   </div>
                 </div>
@@ -1538,7 +1538,7 @@ export default function Home() {
                 <span style={{ fontSize: '10px', color: '#9080cc' }}>Estimated cost</span>
               </div>
               <div style={{ fontSize: '11px', color: '#c8c0ff', marginTop: '6px' }}>
-                {resolution} · {mode === 'multi' ? (audioOn ? '8s/scene' : '10s/scene') : `${duration}s`} · {audioOn ? 'Audio on' : 'No audio'}
+                {resolution} · {mode === 'multi' ? '15s/scene' : `${duration}s`} · {audioOn ? 'Audio on' : 'No audio'}
               </div>
             </div>
 
