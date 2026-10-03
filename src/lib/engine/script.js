@@ -37,7 +37,8 @@ export function normalizeOutline(raw, { targetMinutes }) {
         name: String(c.name || key),
         gender: String(c.gender || "male"),
         ageGroup: String(c.ageGroup || "adult"),
-        appearance: String(c.appearance || ""),
+        // Size is folded into the locked appearance so every prompt carries it.
+        appearance: [String(c.appearance || "").trim(), c.size ? `Size: ${String(c.size).trim()}.` : ""].filter(Boolean).join(" "),
         outfit: String(c.outfit || ""),
         personality: String(c.personality || ""),
       };
@@ -141,11 +142,12 @@ Return ONLY JSON:
       "ageGroup": "child|teen|adult|elder",
       "appearance": "ENGLISH. Exact fixed look: face shape, skin tone, eyes, hair style+color, body build, distinctive features",
       "outfit": "ENGLISH. Exact clothes + colors worn in EVERY scene",
+      "size": "ENGLISH. Height relative to the others, fixed for the whole episode, e.g. 'small, reaches Raza's waist'",
       "personality": "short"
     }
   ],
   "locations": [
-    { "key": "short_lowercase_id", "description": "ENGLISH. Fixed look of this place: layout, key objects, colors, time of day. Reused word-for-word in every scene set here." }
+    { "key": "short_lowercase_id", "description": "ENGLISH. Fixed look of this place: layout, key objects, colors, AND a fixed time of day + lighting (e.g. 'bright midday sun'). Reused word-for-word in every scene set here." }
   ],
   "segments": [ { "summary": "what happens in this part (English)", "targetSeconds": 90 } ]
 }
@@ -220,9 +222,9 @@ export function sceneWords(s) {
 
 const SENTENCE_SPLIT = /(?<=[.!?\u06D4\u061F\u0964])\s+/; // . ! ? ۔ ؟ ।
 const ANGLES = [
-  { shot: "close-up", note: "Close-up on the main character's face showing their emotion" },
-  { shot: "wide", note: "Wide shot showing the whole setting from a different angle" },
-  { shot: "medium", note: "Medium shot from the side, a new camera angle" },
+  { shot: "close-up", note: (who) => `Close-up on ${who}'s face showing their emotion, nobody else in front of the camera` },
+  { shot: "wide", note: () => "Wide shot showing the whole setting from a different angle" },
+  { shot: "medium", note: () => "Medium shot from the side, a new camera angle" },
 ];
 
 /**
@@ -278,7 +280,7 @@ export function splitLongScenes(scenes, language) {
         dialogue,
         characters: [...new Set([...s.characters, ...speakers.filter((c) => s.characters.includes(c))])],
         shot: angle.shot,
-        visual: `${s.visual} Camera: ${angle.note}.`,
+        visual: `${s.visual} Camera: ${angle.note(speakers[0] || s.characters[0] || "the character")}.`,
         action: "", // the scene's main action plays in its first shot
       });
     });

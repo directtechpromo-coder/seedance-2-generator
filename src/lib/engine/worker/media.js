@@ -30,10 +30,10 @@ export function scenePrompt(scene, cast, styleGuide, aspect, fixHint = "") {
   const shot = scene.shot === "close-up" ? "close-up shot" : scene.shot === "wide" ? "wide establishing shot" : "medium shot";
   const frame = aspect === "9:16" ? "vertical 9:16" : "horizontal 16:9";
   if (!cast.length) {
-    return `Cinematic ${frame} frame, ${shot}. ${scene.visual} Mood: ${scene.mood || "cinematic"}. Style: ${styleGuide}. ${NO_TEXT}${fixHint ? ` Fix: ${fixHint}` : ""}`;
+    return `Cinematic ${frame} frame, ${shot}. ${scene.visual} Mood: ${scene.mood || "cinematic"}. Keep the time of day and lighting exactly as described. Style: ${styleGuide}. ${NO_TEXT}${fixHint ? ` Fix: ${fixHint}` : ""}`;
   }
-  const refs = cast.map((c, i) => `reference image ${i + 1} is ${c.name}`).join("; ");
-  return `Create a new ${frame} cinematic frame (${shot}). In the references, ${refs}. Keep each character's face, hairstyle, skin tone, body proportions and outfit EXACTLY the same as in their reference image — same person, same clothes. Do not copy the reference background or pose. Scene: ${scene.visual} Mood: ${scene.mood || "cinematic"}. Style: ${styleGuide}. Only the listed characters appear; no extra people unless the scene describes them. ${NO_TEXT}${fixHint ? ` Fix these problems from the last attempt: ${fixHint}` : ""}`;
+  const refs = cast.map((c, i) => `reference image ${i + 1} is ${c.name} (${c.appearance})`).join("; ");
+  return `Create a new ${frame} cinematic frame (${shot}). In the references, ${refs}. Keep each character's face, hairstyle, skin tone, body proportions and outfit EXACTLY the same as in their reference image — same person, same clothes. Do not copy the reference background or pose. Scene: ${scene.visual} Mood: ${scene.mood || "cinematic"}. Style: ${styleGuide}. Each named character appears EXACTLY ONCE — never two copies of the same character, no twins, no reflections, no over-the-shoulder duplicate. Keep every character's size relative to the others as described. Keep the time of day and lighting exactly as the location describes. Only the listed characters appear; no extra people or flying objects unless the scene describes them. Effects (fire, smoke, light) come from where the scene says, e.g. fire from a mouth stays at the mouth. ${NO_TEXT}${fixHint ? ` Fix these problems from the last attempt: ${fixHint}` : ""}`;
 }
 
 /** Ask the LLM to rewrite a prompt that tripped a safety filter. */
@@ -134,7 +134,7 @@ export async function generateSceneImage(scene, castAll, { styleGuide, aspect, w
 
 /** Image-to-video clip for a MOTION scene. Returns { url, cost }. */
 export async function generateMotion(scene, imageUrl, { clipSeconds, resolution, styleGuide, workDir }) {
-  const prompt = `${scene.motionPrompt || scene.action || "subtle natural motion"}. Keep the characters' faces and outfits unchanged. Smooth, natural, realistic motion. ${styleGuide}`;
+  const prompt = `${scene.motionPrompt || scene.action || "subtle natural motion"}. The characters keep EXACTLY the same face, hair color, skin tone and clothes from the first frame to the last — no transformation, no new people. Smooth, natural motion. ${styleGuide}`;
   if (isMockMode()) {
     const out = path.join(workDir, `clip-${scene.index}.mp4`);
     const src = new URL(imageUrl).pathname;

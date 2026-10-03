@@ -35,8 +35,10 @@ Scene description: ${scene.visual}
 Check:
 1. Identity: is each character clearly the SAME person as their reference — face, hairstyle, skin tone, age, body type?
 2. Outfit: same clothes and colors as the reference?
-3. All listed characters are present; no duplicated or extra copies of them.
-4. No visible text/letters, no deformed faces/hands/limbs.
+3. All listed characters are present EXACTLY ONCE — a second copy of any character (twin, over-the-shoulder duplicate, reflection) is a severe error (score 3 or less).
+4. Relative sizes match the references/description (a small creature must not be as tall as a child).
+5. The image shows what the scene describes — the key action/effect in the right place (e.g. fire coming from a mouth, not from bushes).
+6. No visible text/letters, no deformed faces/hands/limbs.
 
 Return ONLY JSON: {"score": 0-10 (10 = perfect continuity, below 7 = must regenerate), "issues": ["short concrete problems, e.g. 'Raza's shirt is blue instead of red'"]}`,
     imageUrls: [...cast.map((c) => c.masterImageUrl), imageUrl],
@@ -47,15 +49,24 @@ Return ONLY JSON: {"score": 0-10 (10 = perfect continuity, below 7 = must regene
   return { pass: score >= LIMITS.qaPassScore, score, issues, cost };
 }
 
-/** Compare a frame from the middle of a motion clip with the scene's start image. */
-export async function checkClipFrame({ scene, imageUrl, frameUrl, attempt = 0 }) {
+/**
+ * Check a motion clip for identity drift: compares frames from the middle AND the
+ * end of the clip with the character references and the clip's start image.
+ * (Drift usually shows up near the end, so the end frame matters most.)
+ */
+export async function checkClipFrame({ scene, cast = [], imageUrl, frameUrls, attempt = 0 }) {
+  const refs = cast.map((c, i) => `image ${i + 1} = ${c.name} reference`).join(", ");
+  const n = cast.length;
   const { json, cost } = await visionJSON({
     system: SYSTEM,
-    prompt: `Image 1 is the start frame of an AI video clip. Image 2 is a frame from the middle of the clip.
+    prompt: `${n ? `The first ${n} image(s) are LOCKED character references (${refs}). ` : ""}Image ${n + 1} is the START frame of an AI video clip. Image ${n + 2} is from the MIDDLE and image ${n + 3} is from the END of the clip.
 Intended motion: ${scene.motionPrompt || scene.action || "subtle motion"}.
-Check that the characters keep the same identity/outfit, nothing melts or morphs, no extra limbs, no warped faces, and the motion makes sense.
-Return ONLY JSON: {"score": 0-10 (below 7 = unusable), "issues": ["short problems"]}`,
-    imageUrls: [imageUrl, frameUrl],
+Fail the clip (score below 7) if ANY of these happen in the middle or end frame:
+- a character's face, hair color, skin tone, age or clothes change (even slightly — e.g. black hair turning brown)
+- a character is duplicated, a new person appears, or a character disappears
+- melting, morphing, extra limbs, warped faces
+Return ONLY JSON: {"score": 0-10, "issues": ["short problems, say which frame"]}`,
+    imageUrls: [...cast.map((c) => c.masterImageUrl), imageUrl, ...frameUrls],
     mock: async () => mockScore("clip", scene.index, attempt),
   });
   const score = Math.max(0, Math.min(10, Number(json?.score) || 0));

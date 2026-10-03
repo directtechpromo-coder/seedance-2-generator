@@ -242,9 +242,11 @@ export async function runProject(repo, projectId, { workRoot, log = console.log,
           }
           const local = await download(clip.url, path.join(workDir, "qa", `clip-${s.index}-${attempt}.mp4`));
           const dur = await F.probeDuration(local);
-          const frame = await F.extractFrameAt(local, dur / 2, path.join(workDir, "qa", `mid-${s.index}-${attempt}.jpg`));
-          const frameUrl = await upload(frame);
-          const qa = await checkClipFrame({ scene: s, imageUrl: s.imageUrl, frameUrl, attempt });
+          const mid = await F.extractFrameAt(local, dur * 0.5, path.join(workDir, "qa", `mid-${s.index}-${attempt}.jpg`));
+          const end = await F.extractFrameAt(local, Math.max(0, dur - 0.3), path.join(workDir, "qa", `end-${s.index}-${attempt}.jpg`));
+          const frameUrls = [await upload(mid), await upload(end)];
+          const cast = s.characters.map((k) => p.characters.find((c) => c.key === k)).filter((c) => c?.masterImageUrl).slice(0, 3);
+          const qa = await checkClipFrame({ scene: s, cast, imageUrl: s.imageUrl, frameUrls, attempt });
           ledger.add("qa", qa.cost);
           if (qa.pass) accepted = clip.url;
           else say(`scene ${s.index} clip QA ${qa.score}/10 (${qa.issues.join("; ")})`);
