@@ -7,7 +7,9 @@
     "build": "prisma generate && next build",
     "start": "next start",
     "lint": "eslint",
-    "postinstall": "prisma generate"
+    "postinstall": "prisma generate",
+    "worker": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --env-file-if-exists=.env worker/engine-worker.js",
+    "engine:selftest": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/engine-selftest.js"
   },
   "dependencies": {
     "@fal-ai/client": "^1.2.0",
@@ -19,6 +21,7 @@
     "@stripe/stripe-js": "^9.2.0",
     "clsx": "^2.1.1",
     "framer-motion": "^12.38.0",
+    "msedge-tts": "^2.0.9",
     "next": "16.2.3",
     "next-auth": "^4.24.13",
     "pg": "^8.20.0",

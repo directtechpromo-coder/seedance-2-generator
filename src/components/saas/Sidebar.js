@@ -9,6 +9,7 @@ const NAV_ITEMS = [
     items: [
       { name: "Dashboard", href: "/dashboard", icon: "grid" },
       { name: "Create Video", href: "/", icon: "video" },
+      { name: "Long-Video Studio", href: "/studio", icon: "film" },
       { name: "Gallery", href: "/creations", icon: "image" },
       { name: "Pricing", href: "/pricing", icon: "coin" },
     ],
@@ -25,6 +26,10 @@ function Icon({ name }) {
     case "video":
       return (
         <svg {...common}><polygon points="23 7 16 12 23 17 23 7" /><rect x="1" y="5" width="15" height="14" rx="2" /></svg>
+      );
+    case "film":
+      return (
+        <svg {...common}><rect x="2" y="3" width="20" height="18" rx="2" /><path d="M7 3v18M17 3v18M2 8h5M2 16h5M17 8h5M17 16h5M2 12h20" /></svg>
       );
     case "image":
       return (

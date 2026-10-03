@@ -38,6 +38,7 @@ model User {
   accounts      Account[]
   creations     Creation[]
   sessions      Session[]
+  videoProjects VideoProject[]
 }
 model Creation {
   id           String   @id @default(cuid())
@@ -64,4 +65,101 @@ model VerificationToken {
   token      String   @unique
   expires    DateTime
   @@unique([identifier, token])
+}
+
+// ─── Long-Video Engine (Story Mode + Cinema Mode) ───────────────────────────
+// One row per long-form episode. The worker (worker/engine-worker.js) picks up
+// QUEUED rows, runs the pipeline stage by stage and saves every asset as it is
+// produced, so a crashed/restarted worker resumes instead of starting over.
+model VideoProject {
+  id                 String             @id @default(cuid())
+  userId             String
+  user               User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+  mode               String             // "story" | "cinema"
+  plan               String             @default("standard") // economy | standard | premium
+  prompt             String
+  language           String             @default("ur")
+  targetMinutes      Int                @default(10)
+  style              String?
+  aspect             String             @default("16:9")
+  ttsProvider        String             @default("edge") // edge | elevenlabs
+  qaEnabled          Boolean            @default(true)
+  autoApprove        Boolean            @default(true)
+  burnCaptions       Boolean            @default(false)
+  musicUrl           String?
+  status             String             @default("QUEUED") // QUEUED | RUNNING | AWAITING_APPROVAL | DONE | FAILED | CANCELED
+  stage              String             @default("SCRIPT")
+  progress           Int                @default(0)
+  error              String?
+  lockedAt           DateTime?
+  attempts           Int                @default(0)
+  title              String?
+  outline            Json?
+  narratorVoice      Json?
+  charactersApproved Boolean            @default(false)
+  planned            Boolean            @default(false)
+  finalVideoUrl      String?
+  captionsUrl        String?
+  thumbnailUrl       String?
+  durationSec        Float?
+  estimate           Json?
+  costLedger         Json?
+  costUsd            Float              @default(0)
+  creditsCharged     Int                @default(0)
+  creditsRefunded    Boolean            @default(false)
+  characters         ProjectCharacter[]
+  scenes             ProjectScene[]
+
+  @@index([status, updatedAt])
+  @@index([userId, createdAt])
+}
+
+model ProjectCharacter {
+  id             String       @id @default(cuid())
+  projectId      String
+  project        VideoProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  key            String
+  name           String
+  gender         String
+  ageGroup       String
+  appearance     String
+  outfit         String
+  personality    String?
+  masterImageUrl String?      // LOCKED reference image used for every scene
+  voice          Json?        // LOCKED voice profile used for every line
+  locked         Boolean      @default(false)
+
+  @@unique([projectId, key])
+}
+
+model ProjectScene {
+  id           String       @id @default(cuid())
+  projectId    String
+  project      VideoProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  index        Int
+  narration    String       @default("")
+  dialogue     Json         // [{ character, line }]
+  visual       String
+  characters   String[]
+  shot         String       @default("medium")
+  action       String       @default("")
+  mood         String       @default("")
+  durationSec  Float?
+  audioUrl     String?
+  visualType   String?      // STILL | MOTION
+  audioType    String?      // NARRATION | DIALOGUE | LIPSYNC | SFX_ONLY | SILENT
+  camera       String?
+  motionScore  Int?
+  motionPrompt String?
+  clipSeconds  Int?
+  imageUrl     String?
+  videoUrl     String?
+  lipsyncUrl   String?
+  qaScore      Float?
+  qaNotes      String?
+  error        String?
+
+  @@unique([projectId, index])
 }
