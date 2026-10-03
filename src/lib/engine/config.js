@@ -81,15 +81,15 @@ export const LIMITS = {
   maxMinutes: 15,
   avgSceneSeconds: 8, // target scene length the script writer aims for
   maxShotSeconds: 8, // longer scenes are split into several shots (new angle + image each)
-  minSceneSeconds: 3,
-  silentSceneSeconds: 3,
+  minSceneSeconds: 1.6, // a shot is as long as its speech; only very short lines get padded
+  silentSceneSeconds: 2.5,
   i2vClipLengths: [6, 10], // Hailuo-02 accepts "6" or "10"
   motionScoreThreshold: 6, // planner scores >= this are MOTION candidates
   qaPassScore: 7, // vision judge score (0-10) needed to accept a character image
   qaMaxRetries: 2, // extra attempts per scene when QA fails
   concurrency: Number(process.env.ENGINE_CONCURRENCY || 4),
-  // Measured on Edge TTS output (first live Urdu test ran ~40% faster than 2.3).
-  wordsPerSecond: { ur: 3.0, hi: 3.0, en: 2.7 },
+  // Tuned on live Urdu tests: 2.3 gave too-short videos, 3.0 too short once pauses were trimmed.
+  wordsPerSecond: { ur: 2.6, hi: 2.6, en: 2.6 },
 };
 
 export const LANGUAGES = {

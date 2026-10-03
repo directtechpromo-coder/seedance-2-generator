@@ -108,7 +108,7 @@ function CreateForm({ onCreated }) {
     minutes: 10,
     style: STYLE_PRESETS[0],
     aspect: "16:9",
-    ttsProvider: "edge",
+    ttsProvider: "elevenlabs",
     autoApprove: true,
     qaEnabled: true,
     burnCaptions: false,
@@ -209,7 +209,7 @@ function CreateForm({ onCreated }) {
         <div>
           <span style={C.label}>Voices</span>
           <select value={form.ttsProvider} onChange={(e) => set("ttsProvider")(e.target.value)} style={C.input}>
-            <option value="edge">Standard (free)</option>
+            <option value="edge">Basic (free, flat delivery)</option>
             <option value="elevenlabs">Premium — most expressive (ElevenLabs v3)</option>
           </select>
         </div>

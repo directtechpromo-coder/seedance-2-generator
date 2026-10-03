@@ -179,7 +179,9 @@ const TRIM_SILENCE =
   "areverse,silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.08,areverse," +
   "silenceremove=stop_periods=-1:stop_duration=0.05:stop_threshold=-45dB:stop_silence=0.25:detection=peak";
 
-export async function joinSpeech(parts, out, { gapMs = 220, leadMs = 120, tailMs = 280 } = {}) {
+// No per-scene loudness normalisation here: it flattened the emotion (an excited line and a
+// whisper ended up equally loud). Loudness is set once for the whole video in finalize().
+export async function joinSpeech(parts, out, { gapMs = 220, leadMs = 60, tailMs = 150 } = {}) {
   if (!parts.length) throw new Error("joinSpeech: no parts");
   const inputs = parts.flatMap((p) => ["-i", p]);
   const gap = gapMs / 1000;
@@ -191,7 +193,7 @@ export async function joinSpeech(parts, out, { gapMs = 220, leadMs = 120, tailMs
     [
       ...inputs,
       "-filter_complex",
-      `${chains};${labels}concat=n=${parts.length}:v=0:a=1,adelay=${leadMs}|${leadMs},apad=pad_dur=${tailMs / 1000},loudnorm=I=-16:TP=-1.5:LRA=11,aresample=48000[a]`,
+      `${chains};${labels}concat=n=${parts.length}:v=0:a=1,adelay=${leadMs}|${leadMs},apad=pad_dur=${tailMs / 1000},aresample=48000[a]`,
       "-map", "[a]", ...audioEncFor(out), out,
     ],
     "joinSpeech"
@@ -211,11 +213,29 @@ export async function concatSegments(files, out, workDir) {
  * Final pass: optional background music (auto-ducked under speech) and
  * optional burned-in captions. Without either, just copies.
  */
+async function measurePeak(file) {
+  return new Promise((resolve) => {
+    const p = spawn(FFMPEG, ["-hide_banner", "-i", file, "-vn", "-af", "volumedetect", "-f", "null", "-"]);
+    let err = "";
+    p.stderr.on("data", (d) => (err += d));
+    p.on("close", () => {
+      const m = err.match(/max_volume:\s*(-?[\d.]+) dB/);
+      resolve(m ? parseFloat(m[1]) : null);
+    });
+    p.on("error", () => resolve(null));
+  });
+}
+
+/**
+ * Final pass:
+ *   - one linear gain for the whole voice track so the loudest moment peaks at -1.5 dB
+ *     (keeps the difference between whispers and shouts — emotion survives)
+ *   - optional background music, auto-ducked under speech
+ *   - optional burned-in captions
+ */
 export async function finalize({ input, out, musicFile, srtFile, burnCaptions, language }) {
-  if (!musicFile && !(burnCaptions && srtFile)) {
-    await fs.copyFile(input, out);
-    return out;
-  }
+  const peak = await measurePeak(input);
+  const gain = peak == null ? 0 : Math.max(-20, Math.min(20, -1.5 - peak));
   const args = ["-i", input];
   if (musicFile) args.push("-stream_loop", "-1", "-i", musicFile);
   const filters = [];
@@ -230,19 +250,18 @@ export async function finalize({ input, out, musicFile, srtFile, burnCaptions, l
     vMap = "[v]";
     vCodec = VIDEO_ENC;
   }
-  let aMap = "0:a";
-  let aCodec = ["-c:a", "copy"];
+  filters.push(`[0:a]volume=${gain.toFixed(2)}dB[vo]`);
   if (musicFile) {
     filters.push(
-      `[0:a]asplit=2[voice][sc];[1:a]aresample=48000,aformat=channel_layouts=stereo,volume=0.18[m];` +
+      `[vo]asplit=2[voice][sc];[1:a]aresample=48000,aformat=channel_layouts=stereo,volume=0.18[m];` +
         `[m][sc]sidechaincompress=threshold=0.02:ratio=10:attack=15:release=400[duck];` +
-        `[voice][duck]amix=inputs=2:duration=first:normalize=0[a]`
+        `[voice][duck]amix=inputs=2:duration=first:normalize=0,alimiter=limit=0.89[a]`
     );
-    aMap = "[a]";
-    aCodec = AUDIO_ENC;
+  } else {
+    filters.push(`[vo]anull[a]`);
   }
   await ff(
-    [...args, "-filter_complex", filters.join(";"), "-map", vMap, "-map", aMap, ...vCodec, ...aCodec, "-shortest", "-movflags", "+faststart", out],
+    [...args, "-filter_complex", filters.join(";"), "-map", vMap, "-map", "[a]", ...vCodec, ...AUDIO_ENC, "-shortest", "-movflags", "+faststart", out],
     "finalize"
   );
   return out;
