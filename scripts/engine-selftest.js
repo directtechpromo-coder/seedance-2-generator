@@ -90,7 +90,7 @@ await test("budget is never exceeded and highest scores win", () => {
   for (const planKey of ["economy", "standard", "premium"]) {
     const plan = enforceBudget({ scenes, scores, planKey });
     const used = plan.reduce((a, p) => a + p.clipSeconds, 0);
-    const cap = { economy: 60, standard: 150, premium: 300 }[planKey];
+    const cap = { economy: 60, standard: 150, premium: 300 }[planKey]; // 600s video: scaled budget > minimum
     assert.ok(used <= cap, `${planKey}: used ${used}s > cap ${cap}s`);
     const lips = plan.filter((p) => p.lipsync).length;
     assert.ok(lips <= { economy: 0, standard: 3, premium: 8 }[planKey], `${planKey}: too many lipsync (${lips})`);
@@ -103,6 +103,15 @@ await test("budget is never exceeded and highest scores win", () => {
     const skipped = plan.filter((p) => p.visualType === "STILL" && p.motionScore + (p.index <= 2 ? 2 : 0) >= 6).map((p) => p.motionScore + (p.index <= 2 ? 2 : 0));
     if (motion.length && skipped.length) assert.ok(Math.min(...motion) >= Math.max(...skipped), `${planKey}: a lower score got motion over a higher one`);
   }
+});
+
+await test("short cinema videos still get motion (plan minimum)", () => {
+  const scenes = Array.from({ length: 6 }, (_, i) => ({ index: i, durationSec: 8, narration: "x", dialogue: [], characters: [], shot: "medium", action: "runs" }));
+  const scores = new Map(scenes.map((s) => [s.index, { motionScore: 8, motionPrompt: "m", camera: "zoom_in", lipsync: false }]));
+  const eco = enforceBudget({ scenes, scores, planKey: "economy" }); // 48s video
+  const used = eco.reduce((a, p) => a + p.clipSeconds, 0);
+  assert.equal(eco.filter((p) => p.visualType === "MOTION").length, 2, "economy gets 2 moving scenes in a short video");
+  assert.ok(used <= 12, `economy minimum is 12s, used ${used}`);
 });
 
 await test("story plan is all stills with camera moves", () => {
@@ -119,6 +128,13 @@ await test("script normalization drops unknown characters and keeps off-screen s
   const sc = normalizeScenes([{ visual: "v", characters: ["raza", "ghost"], dialogue: [{ character: "Raza", line: "x" }, { character: "ghost", line: "y" }] }], ["raza"]);
   assert.deepEqual(sc[0].characters, ["raza"]);
   assert.equal(sc[0].dialogue.length, 1);
+});
+
+await test("locations are locked into every scene set there", () => {
+  const o = normalizeOutline({ characters: [], locations: [{ key: "Garden", description: "small home garden with a red brick wall and a mango tree" }], segments: [] }, { targetMinutes: 1 });
+  const sc = normalizeScenes([{ visual: "Raza kicks a ball", location: "garden" }, { visual: "Night sky", location: "unknown" }], [], o.locations);
+  assert.match(sc[0].visual, /^Location: small home garden with a red brick wall/);
+  assert.equal(sc[1].visual, "Night sky");
 });
 
 await test("estimate scales with plan and mode", () => {
@@ -231,7 +247,7 @@ await test("cinema mode: full episode renders, budget + lipsync + QA regeneratio
 
   const motion = p.scenes.filter((s) => s.visualType === "MOTION");
   assert.ok(motion.length >= 2, "action scenes became motion");
-  const budget = Math.round((300 * sum) / 600); // premium = 300s per 10 min
+  const budget = Math.max(24, Math.round((300 * sum) / 600)); // premium = 300s per 10 min, min 24s
   const used = p.scenes.reduce((a, s) => a + (s.clipSeconds || 0), 0);
   assert.ok(used <= budget, `motion ${used}s exceeds budget ${budget}s`);
   assert.ok(p.scenes.filter((s) => !s.action && s.audioType !== "LIPSYNC").every((s) => s.visualType === "STILL"), "calm scenes stay still");
@@ -243,7 +259,7 @@ await test("cinema mode: full episode renders, budget + lipsync + QA regeneratio
   assert.equal(p.scenes[3].qaScore, 9, "regenerated image accepted");
   assert.ok(logs.some((l) => l.includes("scene 2 clip QA 3/10")), "clip QA ran");
   assert.ok(p.scenes[2].videoUrl, "clip regenerated after QA fail");
-  assert.equal(p.scenes[4].visualType, "STILL", "lower-priority action scene stays still once the budget is spent");
+  assert.equal(p.scenes[4].visualType, "MOTION", "plan minimum gives every action scene motion in a short video");
   assert.ok(p.captionsUrl && p.thumbnailUrl);
   const srt = await fs.readFile(new URL(p.captionsUrl).pathname, "utf8");
   assert.match(srt, /Sara! Idhar aao/);

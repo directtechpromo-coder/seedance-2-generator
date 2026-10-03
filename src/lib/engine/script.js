@@ -54,6 +54,17 @@ export function normalizeOutline(raw, { targetMinutes }) {
     targetSeconds: Math.max(20, Math.round(((Number(s.targetSeconds) || 90) / sum) * totalSec)),
   }));
 
+  const locSeen = new Set();
+  const locations = (Array.isArray(raw?.locations) ? raw.locations : [])
+    .slice(0, 8)
+    .map((l) => {
+      let key = slug(l.key || l.name);
+      while (locSeen.has(key)) key = `${key}_2`;
+      locSeen.add(key);
+      return { key, description: String(l.description || "").trim() };
+    })
+    .filter((l) => l.description);
+
   const seo = raw?.seo || {};
   return {
     title: String(raw?.title || "Untitled"),
@@ -66,12 +77,14 @@ export function normalizeOutline(raw, { targetMinutes }) {
       tags: Array.isArray(seo.tags) ? seo.tags.map(String).slice(0, 30) : [],
     },
     characters,
+    locations,
     segments,
   };
 }
 
-export function normalizeScenes(rawScenes, characterKeys) {
+export function normalizeScenes(rawScenes, characterKeys, locations = []) {
   const keys = new Set(characterKeys);
+  const locByKey = Object.fromEntries(locations.map((l) => [l.key, l.description]));
   const list = Array.isArray(rawScenes) ? rawScenes : [];
   return list
     .map((s) => {
@@ -83,10 +96,14 @@ export function normalizeScenes(rawScenes, characterKeys) {
       );
       // A speaker who is NOT in `characters` is treated as off-screen voiceover
       // (never lip-synced). The planner relies on this.
+      // Locked location: the same fixed description is put in front of every
+      // scene set there, so the garden stays the same garden all episode.
+      const loc = locByKey[slug(s.location)];
+      const visual = String(s.visual || "").trim();
       return {
         narration: String(s.narration || "").trim(),
         dialogue,
-        visual: String(s.visual || "").trim(),
+        visual: visual && loc ? `Location: ${loc}. ${visual}` : visual,
         characters,
         shot: ["wide", "medium", "close-up"].includes(s.shot) ? s.shot : "medium",
         action: String(s.action || "").trim(),
@@ -126,12 +143,16 @@ Return ONLY JSON:
       "personality": "short"
     }
   ],
+  "locations": [
+    { "key": "short_lowercase_id", "description": "ENGLISH. Fixed look of this place: layout, key objects, colors, time of day. Reused word-for-word in every scene set here." }
+  ],
   "segments": [ { "summary": "what happens in this part (English)", "targetSeconds": 90 } ]
 }
 
 Rules:
 - Exactly ${nSeg} segments whose targetSeconds add up to about ${targetMinutes * 60}.
 - 1-6 recurring characters max. Animals/creatures allowed (gender "neutral").
+- 1-6 locations. Keep the story in as few places as it needs; a place must not silently change into another.
 - Strong hook in segment 1, rising tension, satisfying ending.
 ${SAFETY_RULES}`;
 }
@@ -143,6 +164,7 @@ function segmentPrompt({ outline, segment, previous, language }) {
   const cast = outline.characters
     .map((c) => `- ${c.key} (${c.name}, ${c.ageGroup} ${c.gender}): ${c.appearance}; wears ${c.outfit}`)
     .join("\n");
+  const places = (outline.locations || []).map((l) => `- ${l.key}: ${l.description}`).join("\n");
   const prev = previous.length
     ? previous.map((s) => `- ${s.visual} | ${s.narration} ${s.dialogue.map((d) => `${d.character}: ${d.line}`).join(" ")}`).join("\n")
     : "(this is the opening — start with a hook)";
@@ -150,11 +172,15 @@ function segmentPrompt({ outline, segment, previous, language }) {
 Characters (use these keys exactly):
 ${cast || "(no recurring characters)"}
 
+Locations (use these keys exactly):
+${places || "(none fixed)"}
+
 Story so far (last scenes):
 ${prev}
 
 Now write segment ${segment.index} of ${outline.segments.length}: ${segment.summary}
-Write about ${nScenes} scenes, each ~${LIMITS.avgSceneSeconds} seconds (~${words} spoken words per scene).
+Write about ${nScenes} scenes, each ~${LIMITS.avgSceneSeconds} seconds of speech.
+LENGTH IS CRITICAL: each scene needs AT LEAST ${words} spoken words (narration + dialogue combined) — about ${words * nScenes} words for this segment. Short scenes make the video too short.
 
 Return ONLY JSON:
 {
@@ -164,6 +190,7 @@ Return ONLY JSON:
       "dialogue": [ { "character": "key", "line": "spoken line in ${LANGUAGES[language].label}" } ],
       "visual": "ENGLISH. What the camera sees: setting, lighting, which characters (by name) and what they are doing. ONE clear action only.",
       "characters": ["keys of characters VISIBLE in this shot"],
+      "location": "location key where this shot happens",
       "shot": "wide|medium|close-up",
       "action": "ENGLISH. The single physical movement in this shot, or empty string if nothing moves",
       "mood": "one word"
@@ -212,7 +239,7 @@ export async function generateScript({ prompt, language = "ur", targetMinutes = 
         mock: mock?.segment ? () => mock.segment(segment) : undefined,
       });
       cost += r.cost;
-      segScenes = normalizeScenes(r.json?.scenes, keys);
+      segScenes = normalizeScenes(r.json?.scenes, keys, outline.locations);
     }
     if (!segScenes.length) throw new Error(`Script writer returned no scenes for segment ${segment.index}`);
     scenes.push(...segScenes);

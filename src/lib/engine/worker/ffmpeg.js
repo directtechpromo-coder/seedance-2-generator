@@ -171,12 +171,18 @@ export async function makeSilence(duration, out) {
 }
 
 /** Join several speech clips into one scene track with short pauses, loudness-normalised. */
-export async function joinSpeech(parts, out, { gapMs = 250, leadMs = 150, tailMs = 350 } = {}) {
+// Strip leading/trailing silence that TTS engines add (Edge adds ~0.7s at the end),
+// so scenes don't have dead air before the cut.
+const TRIM_SILENCE =
+  "silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.05," +
+  "areverse,silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.08,areverse";
+
+export async function joinSpeech(parts, out, { gapMs = 220, leadMs = 120, tailMs = 280 } = {}) {
   if (!parts.length) throw new Error("joinSpeech: no parts");
   const inputs = parts.flatMap((p) => ["-i", p]);
   const gap = gapMs / 1000;
   const chains = parts
-    .map((_, i) => `[${i}:a]aresample=48000,aformat=channel_layouts=stereo,apad=pad_dur=${i === parts.length - 1 ? 0 : gap}[p${i}]`)
+    .map((_, i) => `[${i}:a]aresample=48000,aformat=channel_layouts=stereo,${TRIM_SILENCE},apad=pad_dur=${i === parts.length - 1 ? 0 : gap}[p${i}]`)
     .join(";");
   const labels = parts.map((_, i) => `[p${i}]`).join("");
   await ff(

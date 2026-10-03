@@ -17,7 +17,7 @@ export function estimateProject({ mode = "cinema", planKey = "standard", minutes
 
   const images = (scenes + characters) * PRICES.imagePerImage * retryFactor;
 
-  const motionSec = mode === "cinema" ? (plan.motionSecondsPer10Min * minutes) / 10 : 0;
+  const motionSec = mode === "cinema" ? Math.max(plan.minMotionSeconds || 0, (plan.motionSecondsPer10Min * minutes) / 10) : 0;
   const motion = motionSec * (PRICES.i2vPerSecond[plan.videoResolution] || 0.045) * (qa ? 1.1 : 1);
 
   const lipsyncScenes = mode === "cinema" ? plan.maxLipsyncScenes : 0;

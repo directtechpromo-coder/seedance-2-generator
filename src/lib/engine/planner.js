@@ -118,6 +118,11 @@ export async function scoreScenes(scenes, { mock } = {}) {
   return { scores: out, cost };
 }
 
+/** Motion seconds a video of `totalSec` gets on this plan (never below the plan minimum). */
+export function motionBudgetSeconds(plan, totalSec) {
+  return Math.max(plan.minMotionSeconds || 0, Math.round((plan.motionSecondsPer10Min * totalSec) / 600));
+}
+
 /**
  * Deterministic budget enforcement. Pure function — unit tested.
  * @param {{scenes:Array, scores:Map, planKey:string}} args scenes must have durationSec
@@ -125,7 +130,7 @@ export async function scoreScenes(scenes, { mock } = {}) {
 export function enforceBudget({ scenes, scores, planKey = "standard" }) {
   const plan = PLANS[planKey] || PLANS.standard;
   const totalSec = scenes.reduce((a, s) => a + (s.durationSec || 0), 0);
-  let budget = Math.round((plan.motionSecondsPer10Min * totalSec) / 600);
+  let budget = motionBudgetSeconds(plan, totalSec);
   let lipsyncLeft = plan.maxLipsyncScenes;
 
   const result = scenes.map((s, i) => {
@@ -142,7 +147,6 @@ export function enforceBudget({ scenes, scores, planKey = "standard" }) {
     };
   });
 
-  const clipFor = (dur) => (dur <= 7.5 ? 6 : 10);
   // Opening scenes decide retention — give them a bonus.
   const effScore = (r) => r.motionScore + (r.index <= 2 ? 2 : 0);
 
@@ -163,19 +167,27 @@ export function enforceBudget({ scenes, scores, planKey = "standard" }) {
     lipsyncLeft--;
   }
 
-  // 2) Motion by score.
+  // 2) Motion by score. First pass: 6s clips, so as MANY key scenes as possible move
+  //    (a slow camera move on the clip's last frame covers the rest of the scene).
+  const durOf = (r) => scenes.find((s, i) => (s.index ?? i) === r.index)?.durationSec || LIMITS.avgSceneSeconds;
   const motionCandidates = result
     .filter((r) => r.visualType === "STILL" && effScore(r) >= LIMITS.motionScoreThreshold)
     .sort((a, b) => effScore(b) - effScore(a) || a.index - b.index);
   for (const r of motionCandidates) {
-    const dur = scenes.find((s, i) => (s.index ?? i) === r.index)?.durationSec || LIMITS.avgSceneSeconds;
-    let clip = clipFor(dur);
-    if (budget < clip) clip = budget >= 6 ? 6 : 0;
-    if (!clip) continue;
+    if (budget < 6) break;
     r.visualType = "MOTION";
-    r.clipSeconds = clip;
+    r.clipSeconds = 6;
     if (!r.motionPrompt) r.motionPrompt = "subtle natural motion, cinematic camera movement";
-    budget -= clip;
+    budget -= 6;
+  }
+  // Second pass: leftover budget upgrades long, high-scoring scenes to 10s clips.
+  const upgradable = result
+    .filter((r) => r.visualType === "MOTION" && !r.lipsync && r.clipSeconds === 6 && durOf(r) > 7.5)
+    .sort((a, b) => effScore(b) - effScore(a) || a.index - b.index);
+  for (const r of upgradable) {
+    if (budget < 4) break;
+    r.clipSeconds = 10;
+    budget -= 4;
   }
 
   return result;

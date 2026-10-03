@@ -49,22 +49,27 @@ export const USD_PER_CREDIT = 0.1;
 export const MARKUP = Number(process.env.ENGINE_MARKUP || 1.0);
 
 // Quality plans for Cinema Mode. Story Mode ignores motion/lipsync budgets.
+// Motion budget = max(minMotionSeconds, motionSecondsPer10Min scaled to the video length),
+// so short videos still get real moving scenes.
 export const PLANS = {
   economy: {
     label: "Economy",
     motionSecondsPer10Min: 60,
+    minMotionSeconds: 12, // at least 2 moving scenes, even in a 1-minute video
     maxLipsyncScenes: 0,
     videoResolution: "512P",
   },
   standard: {
     label: "Standard",
     motionSecondsPer10Min: 150,
+    minMotionSeconds: 18,
     maxLipsyncScenes: 3,
     videoResolution: "768P",
   },
   premium: {
     label: "Premium",
     motionSecondsPer10Min: 300,
+    minMotionSeconds: 24,
     maxLipsyncScenes: 8,
     videoResolution: "768P",
   },
@@ -81,7 +86,8 @@ export const LIMITS = {
   qaPassScore: 7, // vision judge score (0-10) needed to accept a character image
   qaMaxRetries: 2, // extra attempts per scene when QA fails
   concurrency: Number(process.env.ENGINE_CONCURRENCY || 4),
-  wordsPerSecond: { ur: 2.3, hi: 2.3, en: 2.6 },
+  // Measured on Edge TTS output (first live Urdu test ran ~40% faster than 2.3).
+  wordsPerSecond: { ur: 3.0, hi: 3.0, en: 2.7 },
 };
 
 export const LANGUAGES = {
