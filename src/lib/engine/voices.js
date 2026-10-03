@@ -86,9 +86,8 @@ export function assignVoices({ provider = "edge", language = "ur", narratorGende
     const pitch = AGE_PITCH[age] || variant.pitch;
     const rate = AGE_RATE[age] || variant.rate;
     if (provider === "elevenlabs") {
-      // ElevenLabs has distinct voices; use speed for age, no pitch control.
-      const speed = age === "child" ? 1.08 : age === "elder" ? 0.9 : 1.0;
-      return { provider, voice, speed, stability: 0.6, similarityBoost: 0.8, language };
+      // ElevenLabs has distinct voices. v3 stability: 0 creative, 0.5 natural, 1 robust.
+      return { provider, voice, stability: 0.5, language, ageGroup: age };
     }
     return { provider, voice, pitch, rate, language };
   };

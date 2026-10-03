@@ -14,6 +14,7 @@ import { generateScript } from "../script.js";
 import { assignVoices } from "../voices.js";
 import { storyPlan, cinemaPlan, baseAudioType } from "../planner.js";
 import { speak } from "./tts.js";
+import { normalizeEmotion } from "../emotion.js";
 import { generateMaster, generateSceneImage, generateMotion, generateLipsync } from "./media.js";
 import { checkSceneImage, checkClipFrame } from "./qa.js";
 import { download, upload, extFromUrl } from "./storage.js";
@@ -121,13 +122,13 @@ export async function runProject(repo, projectId, { workRoot, log = console.log,
         const parts = [];
         let cost = 0;
         if (s.narration?.trim()) {
-          const r = await speak(s.narration, p.narratorVoice, path.join(dir, "n.mp3"));
+          const r = await speak(s.narration, p.narratorVoice, path.join(dir, "n.mp3"), normalizeEmotion(s.mood));
           parts.push(r.file);
           cost += r.cost;
         }
         for (const [i, d] of (s.dialogue || []).entries()) {
           const profile = byKey[d.character]?.voice || p.narratorVoice;
-          const r = await speak(d.line, profile, path.join(dir, `d${i}.mp3`));
+          const r = await speak(d.line, profile, path.join(dir, `d${i}.mp3`), d.emotion);
           parts.push(r.file);
           cost += r.cost;
         }

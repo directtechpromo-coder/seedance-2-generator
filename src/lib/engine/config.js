@@ -25,7 +25,8 @@ export const ENGINE_MODELS = {
   lipsync: process.env.ENGINE_LIPSYNC || "fal-ai/sync-lipsync/v2",
 
   // Premium TTS option (Edge TTS is the free default, see tts.js).
-  elevenlabs: "fal-ai/elevenlabs/tts/multilingual-v2",
+  // Eleven v3: supports Urdu + Hindi and emotion audio tags. (Multilingual v2 has NO Urdu.)
+  elevenlabs: process.env.ENGINE_ELEVENLABS || "fal-ai/elevenlabs/tts/eleven-v3",
 };
 
 // USD list prices. Used for estimates, the cost ledger and credit charging.

@@ -12,16 +12,21 @@ import path from "node:path";
 import { ENGINE_MODELS, PRICES } from "../config.js";
 import { falRun } from "../fal.js";
 import { download } from "./storage.js";
+import { edgeProsody, elevenText } from "../emotion.js";
 import { run } from "./ffmpeg.js";
 
-async function edgeTTS(text, profile, out) {
+const escapeXml = (t) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;");
+
+async function edgeTTS(text, profile, out, emotion) {
   const { MsEdgeTTS, OUTPUT_FORMAT } = await import("msedge-tts");
   let lastErr;
   for (let attempt = 0; attempt < 3; attempt++) {
     const tts = new MsEdgeTTS();
     try {
       await tts.setMetadata(profile.voice, OUTPUT_FORMAT.AUDIO_24KHZ_96KBITRATE_MONO_MP3);
-      const { audioStream } = tts.toStream(text, { pitch: profile.pitch || "+0Hz", rate: profile.rate || "+0%" });
+      // Locked voice + per-line emotion (speed/pitch/volume offsets).
+      // Text is placed inside SSML (XML) by the library, so escape it.
+      const { audioStream } = tts.toStream(escapeXml(text), edgeProsody(profile, emotion));
       await new Promise((resolve, reject) => {
         const ws = createWriteStream(out);
         audioStream.on("error", reject);
@@ -44,18 +49,14 @@ async function edgeTTS(text, profile, out) {
   throw new Error(`Edge TTS failed for voice ${profile.voice}: ${lastErr?.message}`);
 }
 
-async function elevenTTS(text, profile, out) {
-  const data = await falRun(
-    ENGINE_MODELS.elevenlabs,
-    {
-      text,
-      voice: profile.voice,
-      stability: profile.stability ?? 0.6,
-      similarity_boost: profile.similarityBoost ?? 0.8,
-      speed: profile.speed ?? 1,
-    },
-    { label: "elevenlabs" }
-  );
+async function elevenTTS(text, profile, out, emotion) {
+  const input = {
+    text: elevenText(text, emotion), // e.g. "[excited] ..." — v3 audio tag
+    voice: profile.voice,
+    stability: profile.stability ?? 0.5,
+  };
+  if (profile.language) input.language_code = profile.language;
+  const data = await falRun(ENGINE_MODELS.elevenlabs, input, { label: "elevenlabs" });
   const url = data?.audio?.url || data?.audio_url?.url || data?.url;
   if (!url) throw new Error("ElevenLabs returned no audio URL");
   await download(url, out);
@@ -74,7 +75,7 @@ async function mockTTS(text, profile, out) {
 }
 
 /** Speak `text` with a locked voice profile into `out` (.mp3). Returns { file, cost }. */
-export async function speak(text, profile, out) {
+export async function speak(text, profile, out, emotion = "neutral") {
   await fs.mkdir(path.dirname(out), { recursive: true });
   const clean = String(text).replace(/\s+/g, " ").trim();
   if (!clean) throw new Error("speak(): empty text");
@@ -82,9 +83,9 @@ export async function speak(text, profile, out) {
     case "mock":
       return mockTTS(clean, profile, out);
     case "elevenlabs":
-      return elevenTTS(clean, profile, out);
+      return elevenTTS(clean, profile, out, emotion);
     case "edge":
     default:
-      return edgeTTS(clean, profile, out);
+      return edgeTTS(clean, profile, out, emotion);
   }
 }

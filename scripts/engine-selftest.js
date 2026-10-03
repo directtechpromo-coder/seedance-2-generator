@@ -160,6 +160,24 @@ await test("long scenes are split into ~8s shots with new angles, speech order k
   assert.deepEqual(splitLongScenes([{ ...long, narration: "chhota", dialogue: [] }], "ur").length, 1, "short scenes untouched");
 });
 
+await test("emotions: locked voice + per-line delivery", async () => {
+  const { edgeProsody, elevenText, normalizeEmotion } = await import("../src/lib/engine/emotion.js");
+  assert.equal(normalizeEmotion("Tense"), "scared");
+  assert.equal(normalizeEmotion("fun"), "happy");
+  assert.equal(normalizeEmotion("???"), "neutral");
+  const child = { voice: "ur-PK-AsadNeural", pitch: "+28Hz", rate: "+6%" };
+  const calm = edgeProsody(child, "neutral");
+  const exc = edgeProsody(child, "excited");
+  assert.deepEqual(calm, { rate: "+6%", pitch: "+28Hz", volume: "+0%" }, "neutral keeps the locked profile");
+  assert.ok(parseFloat(exc.rate) > 6 && parseFloat(exc.pitch) > 28, "excited is faster and higher");
+  assert.ok(parseFloat(edgeProsody(child, "sad").rate) < 6, "sad is slower");
+  assert.equal(elevenText("Dekho!", "excited"), "[excited] Dekho!");
+  assert.equal(elevenText("Theek hai", "neutral"), "Theek hai");
+  const sc = normalizeScenes([{ visual: "v", mood: "spooky", dialogue: [{ character: "raza", line: "Kaun hai?", emotion: "scared" }], characters: ["raza"] }], ["raza"]);
+  assert.equal(sc[0].mood, "scared");
+  assert.equal(sc[0].dialogue[0].emotion, "scared");
+});
+
 await test("estimate scales with plan and mode", () => {
   const story = estimateProject({ mode: "story", minutes: 10 });
   const eco = estimateProject({ mode: "cinema", planKey: "economy", minutes: 10 });

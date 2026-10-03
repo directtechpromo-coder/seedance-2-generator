@@ -210,7 +210,7 @@ function CreateForm({ onCreated }) {
           <span style={C.label}>Voices</span>
           <select value={form.ttsProvider} onChange={(e) => set("ttsProvider")(e.target.value)} style={C.input}>
             <option value="edge">Standard (free)</option>
-            <option value="elevenlabs">Premium (ElevenLabs)</option>
+            <option value="elevenlabs">Premium — most expressive (ElevenLabs v3)</option>
           </select>
         </div>
       </div>

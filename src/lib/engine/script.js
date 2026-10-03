@@ -9,6 +9,7 @@
 
 import { LANGUAGES, LIMITS } from "./config.js";
 import { llmJSON } from "./llm.js";
+import { EMOTIONS, normalizeEmotion } from "./emotion.js";
 
 const SAFETY_RULES = `Content rules (the image/video models will REJECT violations):
 - No gore, blood, wounds, dead bodies shown, or weapons aimed at people. For crime/horror, imply danger with shadows, reactions, aftermath objects, police tape, silhouettes.
@@ -89,7 +90,7 @@ export function normalizeScenes(rawScenes, characterKeys, locations = []) {
   return list
     .map((s) => {
       const dialogue = (Array.isArray(s.dialogue) ? s.dialogue : [])
-        .map((d) => ({ character: slug(d.character), line: String(d.line || "").trim() }))
+        .map((d) => ({ character: slug(d.character), line: String(d.line || "").trim(), emotion: normalizeEmotion(d.emotion) }))
         .filter((d) => d.line && keys.has(d.character));
       const characters = [...new Set((Array.isArray(s.characters) ? s.characters : []).map(slug))].filter((k) =>
         keys.has(k)
@@ -107,7 +108,7 @@ export function normalizeScenes(rawScenes, characterKeys, locations = []) {
         characters,
         shot: ["wide", "medium", "close-up"].includes(s.shot) ? s.shot : "medium",
         action: String(s.action || "").trim(),
-        mood: String(s.mood || "").trim(),
+        mood: normalizeEmotion(s.mood), // also the narrator's delivery for this scene
       };
     })
     .filter((s) => s.visual);
@@ -190,13 +191,13 @@ Return ONLY JSON:
   "scenes": [
     {
       "narration": "narrator's words in ${LANGUAGES[language].label} (may be empty)",
-      "dialogue": [ { "character": "key", "line": "spoken line in ${LANGUAGES[language].label}" } ],
+      "dialogue": [ { "character": "key", "line": "spoken line in ${LANGUAGES[language].label}", "emotion": "how it is said" } ],
       "visual": "ENGLISH. What the camera sees: setting, lighting, which characters (by name) and what they are doing. ONE clear action only.",
       "characters": ["keys of characters VISIBLE in this shot"],
       "location": "location key where this shot happens",
       "shot": "wide|medium|close-up",
       "action": "ENGLISH. The single physical movement in this shot, or empty string if nothing moves",
-      "mood": "one word"
+      "mood": "the narrator's emotion for this scene"
     }
   ]
 }
@@ -206,6 +207,8 @@ Rules:
 - Every scene must have narration or dialogue, except at most one short silent dramatic pause per segment.
 - A character who speaks a dialogue line must be listed in that scene's "characters".
 - Vary shots: establishing wides, medium action shots, close-ups for emotion and dialogue.
+- "emotion" and "mood" must each be one of: ${EMOTIONS.join(", ")}. Match the moment (a scared child = scared, a joke = laughing, a secret = whisper). Avoid "neutral" unless the line is truly flat.
+- Write lines the way people really talk, with natural punctuation (! ? ...) — it makes the voices more expressive.
 - Visuals never repeat the exact same composition twice in a row.
 ${SAFETY_RULES}`;
 }
@@ -240,7 +243,7 @@ export function splitLongScenes(scenes, language) {
     const units = [];
     for (const t of s.narration ? s.narration.split(SENTENCE_SPLIT) : []) if (t.trim()) units.push({ kind: "n", text: t.trim() });
     for (const d of s.dialogue || [])
-      for (const t of d.line.split(SENTENCE_SPLIT)) if (t.trim()) units.push({ kind: "d", character: d.character, text: t.trim() });
+      for (const t of d.line.split(SENTENCE_SPLIT)) if (t.trim()) units.push({ kind: "d", character: d.character, emotion: d.emotion, text: t.trim() });
     const shots = [];
     let cur = [];
     let curWords = 0;
@@ -261,7 +264,7 @@ export function splitLongScenes(scenes, language) {
       for (const u of units.filter((u) => u.kind === "d")) {
         const last = dialogue[dialogue.length - 1];
         if (last && last.character === u.character) last.line += ` ${u.text}`;
-        else dialogue.push({ character: u.character, line: u.text });
+        else dialogue.push({ character: u.character, line: u.text, emotion: u.emotion });
       }
       if (k === 0) {
         out.push({ ...s, narration, dialogue });
