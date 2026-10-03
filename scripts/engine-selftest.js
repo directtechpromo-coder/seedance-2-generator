@@ -20,7 +20,7 @@ const { enforceBudget, lipsyncEligible, storyPlan, baseAudioType } = await impor
 const { extractJSON } = await import("../src/lib/engine/llm.js");
 const { assignVoices } = await import("../src/lib/engine/voices.js");
 const { estimateProject } = await import("../src/lib/engine/cost.js");
-const { normalizeOutline, normalizeScenes } = await import("../src/lib/engine/script.js");
+const { normalizeOutline, normalizeScenes, splitLongScenes, sceneWords } = await import("../src/lib/engine/script.js");
 const { buildSrt, probeDuration } = await import("../src/lib/engine/worker/ffmpeg.js");
 const { MemoryRepo } = await import("../src/lib/engine/repo.js");
 const { runProject } = await import("../src/lib/engine/worker/pipeline.js");
@@ -135,6 +135,29 @@ await test("locations are locked into every scene set there", () => {
   const sc = normalizeScenes([{ visual: "Raza kicks a ball", location: "garden" }, { visual: "Night sky", location: "unknown" }], [], o.locations);
   assert.match(sc[0].visual, /^Location: small home garden with a red brick wall/);
   assert.equal(sc[1].visual, "Night sky");
+});
+
+await test("long scenes are split into ~8s shots with new angles, speech order kept", () => {
+  const long = {
+    index: 0,
+    narration: Array.from({ length: 6 }, (_, i) => `Yeh jumla number ${i} hai jo kahani aage barhata hai۔`).join(" "),
+    dialogue: [{ character: "raza", line: "Ammi! Idhar aao. Dekho yeh kya hai!" }],
+    visual: "Raza in the garden.",
+    characters: ["raza"],
+    shot: "medium",
+    action: "Raza kicks the ball",
+    mood: "fun",
+  };
+  const shots = splitLongScenes([long], "ur");
+  const maxWords = Math.round(8 * 3.0);
+  assert.ok(shots.length >= 3, `expected several shots, got ${shots.length}`);
+  for (const sh of shots) assert.ok(sceneWords(sh) <= maxWords + 8, `shot too long: ${sceneWords(sh)} words`);
+  assert.equal(shots[0].action, "Raza kicks the ball", "action stays on the first shot");
+  assert.ok(shots.slice(1).every((s) => s.action === "" && /Camera:/.test(s.visual)), "later shots get new angles");
+  const joined = shots.map((s) => [s.narration, ...s.dialogue.map((d) => d.line)].filter(Boolean).join(" ")).join(" ");
+  const original = [long.narration, long.dialogue[0].line].join(" ");
+  assert.equal(joined.replace(/\s+/g, " "), original.replace(/\s+/g, " "), "no words lost or reordered");
+  assert.deepEqual(splitLongScenes([{ ...long, narration: "chhota", dialogue: [] }], "ur").length, 1, "short scenes untouched");
 });
 
 await test("estimate scales with plan and mode", () => {

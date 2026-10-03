@@ -179,8 +179,11 @@ Story so far (last scenes):
 ${prev}
 
 Now write segment ${segment.index} of ${outline.segments.length}: ${segment.summary}
-Write about ${nScenes} scenes, each ~${LIMITS.avgSceneSeconds} seconds of speech.
-LENGTH IS CRITICAL: each scene needs AT LEAST ${words} spoken words (narration + dialogue combined) — about ${words * nScenes} words for this segment. Short scenes make the video too short.
+Write ${nScenes} scenes, each ~${LIMITS.avgSceneSeconds} seconds of speech.
+LENGTH IS CRITICAL — the video must match the requested runtime:
+- Each scene: ${Math.round(words * 0.8)}-${Math.round(words * 1.2)} spoken words (narration + dialogue combined). NEVER more than ${Math.round(words * 1.2)}.
+- Whole segment: about ${words * nScenes} words in total.
+Short punchy sentences. One idea per scene; start a new scene instead of making one longer.
 
 Return ONLY JSON:
 {
@@ -207,6 +210,79 @@ Rules:
 ${SAFETY_RULES}`;
 }
 
+export function sceneWords(s) {
+  const text = [s.narration, ...(s.dialogue || []).map((d) => d.line)].join(" ");
+  return text.split(/\s+/).filter(Boolean).length;
+}
+
+const SENTENCE_SPLIT = /(?<=[.!?\u06D4\u061F\u0964])\s+/; // . ! ? ۔ ؟ ।
+const ANGLES = [
+  { shot: "close-up", note: "Close-up on the main character's face showing their emotion" },
+  { shot: "wide", note: "Wide shot showing the whole setting from a different angle" },
+  { shot: "medium", note: "Medium shot from the side, a new camera angle" },
+];
+
+/**
+ * Split scenes whose speech is longer than maxShotSeconds into several shots.
+ * Each extra shot gets a new camera angle (so a new image) instead of one
+ * picture sitting on screen for 20 seconds. Order of speech is preserved.
+ */
+export function splitLongScenes(scenes, language) {
+  const wps = LIMITS.wordsPerSecond[language] || 2.6;
+  const maxWords = Math.max(8, Math.round(LIMITS.maxShotSeconds * wps));
+  const out = [];
+  for (const s of scenes) {
+    if (sceneWords(s) <= maxWords * 1.15) {
+      out.push(s);
+      continue;
+    }
+    // Speech units in playback order: narration sentences, then dialogue sentences.
+    const units = [];
+    for (const t of s.narration ? s.narration.split(SENTENCE_SPLIT) : []) if (t.trim()) units.push({ kind: "n", text: t.trim() });
+    for (const d of s.dialogue || [])
+      for (const t of d.line.split(SENTENCE_SPLIT)) if (t.trim()) units.push({ kind: "d", character: d.character, text: t.trim() });
+    const shots = [];
+    let cur = [];
+    let curWords = 0;
+    for (const u of units) {
+      const w = u.text.split(/\s+/).length;
+      if (cur.length && curWords + w > maxWords) {
+        shots.push(cur);
+        cur = [];
+        curWords = 0;
+      }
+      cur.push(u);
+      curWords += w;
+    }
+    if (cur.length) shots.push(cur);
+    shots.forEach((units, k) => {
+      const narration = units.filter((u) => u.kind === "n").map((u) => u.text).join(" ");
+      const dialogue = [];
+      for (const u of units.filter((u) => u.kind === "d")) {
+        const last = dialogue[dialogue.length - 1];
+        if (last && last.character === u.character) last.line += ` ${u.text}`;
+        else dialogue.push({ character: u.character, line: u.text });
+      }
+      if (k === 0) {
+        out.push({ ...s, narration, dialogue });
+        return;
+      }
+      const angle = ANGLES[(k - 1) % ANGLES.length];
+      const speakers = dialogue.map((d) => d.character);
+      out.push({
+        ...s,
+        narration,
+        dialogue,
+        characters: [...new Set([...s.characters, ...speakers.filter((c) => s.characters.includes(c))])],
+        shot: angle.shot,
+        visual: `${s.visual} Camera: ${angle.note}.`,
+        action: "", // the scene's main action plays in its first shot
+      });
+    });
+  }
+  return out;
+}
+
 const SYSTEM =
   "You are a senior YouTube scriptwriter and storyboard artist. You write gripping, well-paced episodes and always answer with strict JSON only.";
 
@@ -227,22 +303,37 @@ export async function generateScript({ prompt, language = "ur", targetMinutes = 
   if (style && !outline.styleGuide) outline.styleGuide = style;
 
   const keys = outline.characters.map((c) => c.key);
+  const wps = LIMITS.wordsPerSecond[language] || 2.6;
   const scenes = [];
   for (const segment of outline.segments) {
     const previous = scenes.slice(-3);
-    let segScenes = [];
-    for (let attempt = 0; attempt < 2 && !segScenes.length; attempt++) {
+    const targetWords = Math.round(segment.targetSeconds * wps);
+    let best = null;
+    let prompt = segmentPrompt({ outline, segment, previous, language });
+    for (let attempt = 0; attempt < 3; attempt++) {
       const r = await llmJSON({
         system: SYSTEM,
-        prompt: segmentPrompt({ outline, segment, previous, language }),
+        prompt,
         maxTokens: 8000,
-        mock: mock?.segment ? () => mock.segment(segment) : undefined,
+        mock: mock?.segment ? () => mock.segment(segment, attempt) : undefined,
       });
       cost += r.cost;
-      segScenes = normalizeScenes(r.json?.scenes, keys, outline.locations);
+      const segScenes = normalizeScenes(r.json?.scenes, keys, outline.locations);
+      if (!segScenes.length) continue;
+      const words = segScenes.reduce((a, s) => a + sceneWords(s), 0);
+      const off = Math.abs(words - targetWords) / targetWords;
+      if (!best || off < best.off) best = { scenes: segScenes, off, words };
+      if (off <= 0.3) break;
+      // Too long or too short: send it back once more with the measured numbers.
+      prompt = `${segmentPrompt({ outline, segment, previous, language })}
+
+IMPORTANT: your previous draft of this segment had ${words} spoken words but the runtime needs about ${targetWords}. ${
+        words > targetWords ? "Cut it down: fewer, shorter sentences." : "Add more spoken lines."
+      } Stay within ${Math.round(targetWords * 0.85)}-${Math.round(targetWords * 1.15)} words in total.`;
     }
-    if (!segScenes.length) throw new Error(`Script writer returned no scenes for segment ${segment.index}`);
-    scenes.push(...segScenes);
+    if (!best) throw new Error(`Script writer returned no scenes for segment ${segment.index}`);
+    scenes.push(...best.scenes);
   }
-  return { outline, scenes: scenes.map((s, i) => ({ ...s, index: i })), cost };
+  const shots = splitLongScenes(scenes, language);
+  return { outline, scenes: shots.map((s, i) => ({ ...s, index: i })), cost };
 }

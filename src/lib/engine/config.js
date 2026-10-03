@@ -78,7 +78,8 @@ export const PLANS = {
 export const LIMITS = {
   minMinutes: 1,
   maxMinutes: 15,
-  avgSceneSeconds: 9, // target scene length the script writer aims for
+  avgSceneSeconds: 8, // target scene length the script writer aims for
+  maxShotSeconds: 8, // longer scenes are split into several shots (new angle + image each)
   minSceneSeconds: 3,
   silentSceneSeconds: 3,
   i2vClipLengths: [6, 10], // Hailuo-02 accepts "6" or "10"

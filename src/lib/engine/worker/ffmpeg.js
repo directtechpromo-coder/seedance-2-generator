@@ -173,9 +173,11 @@ export async function makeSilence(duration, out) {
 /** Join several speech clips into one scene track with short pauses, loudness-normalised. */
 // Strip leading/trailing silence that TTS engines add (Edge adds ~0.7s at the end),
 // so scenes don't have dead air before the cut.
+// Also shortens every pause INSIDE a clip (Edge pauses ~1s after each sentence) to 0.3s.
 const TRIM_SILENCE =
   "silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.05," +
-  "areverse,silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.08,areverse";
+  "areverse,silenceremove=start_periods=1:start_threshold=-45dB:start_silence=0.08,areverse," +
+  "silenceremove=stop_periods=-1:stop_duration=0.05:stop_threshold=-45dB:stop_silence=0.25:detection=peak";
 
 export async function joinSpeech(parts, out, { gapMs = 220, leadMs = 120, tailMs = 280 } = {}) {
   if (!parts.length) throw new Error("joinSpeech: no parts");
