@@ -9,7 +9,7 @@
 // deterministic code (enforceBudget) so the cost of a video is always capped by
 // the user's plan, no matter what the LLM says.
 
-import { LIMITS, PLANS } from "./config.js";
+import { LIMITS, PLANS, MAX_MOTION_RATIO, lipsyncAllowance } from "./config.js";
 import { llmJSON } from "./llm.js";
 
 export const CAMERAS = ["zoom_in", "zoom_out", "pan_left", "pan_right"];
@@ -77,7 +77,7 @@ Scoring guide (motionScore 0-10):
 - 0-3: establishing shots, places, objects, documents, maps, calm narration, portraits
 
 Also give:
-- motionPrompt: ENGLISH, describes ONLY the movement for an image-to-video model, one action, plus camera movement (e.g. "the boy sprints toward the gate, camera tracks left, natural motion")
+- motionPrompt: ENGLISH acting direction for an image-to-video model. Every scene with characters WILL be animated, so describe how they ACT: the main action, body language, facial expression, gestures, who they look at, plus camera movement (e.g. "Raza gasps, steps back with wide scared eyes and raises his hands, Coco tilts its head curiously, slow push-in"). For talking scenes describe the speaker's expressive gestures and the listeners' reactions.
 - camera: best still-image move: zoom_in | zoom_out | pan_left | pan_right
 - lipsync: true only if a single visible character speaking to camera/another character in a close or medium shot would clearly benefit from moving lips
 
@@ -119,19 +119,32 @@ export async function scoreScenes(scenes, { mock } = {}) {
 }
 
 /** Motion seconds a video of `totalSec` gets on this plan (never below the plan minimum). */
-export function motionBudgetSeconds(plan, totalSec) {
-  return Math.max(plan.minMotionSeconds || 0, Math.round((plan.motionSecondsPer10Min * totalSec) / 600));
+/** Hailuo clip length (6 or 10s) that covers a shot of `dur` seconds. */
+export function clipLengthFor(dur) {
+  return dur <= 6.3 ? 6 : 10;
+}
+
+/** Default acting direction when the planner gave none. */
+function actingPrompt(scene) {
+  if (scene.action) return scene.action;
+  const speakers = [...new Set((scene.dialogue || []).map((d) => d.character))];
+  if (speakers.length) return `${speakers.join(" and ")} talking expressively with natural hand gestures, head movement and changing facial expressions, the others react`;
+  if ((scene.characters || []).length) return "the characters move naturally, breathe, blink and react with expressive faces and small gestures";
+  return "subtle natural movement in the scene, gentle cinematic camera movement";
 }
 
 /**
- * Deterministic budget enforcement. Pure function — unit tested.
+ * Cinema Mode plan. Pure function — unit tested.
+ * Every shot with a character or an action is animated (characters act).
+ * Empty establishing shots with a low motion score stay STILL.
+ * Dialogue close-ups get lip sync up to the plan's allowance.
  * @param {{scenes:Array, scores:Map, planKey:string}} args scenes must have durationSec
  */
 export function enforceBudget({ scenes, scores, planKey = "standard" }) {
   const plan = PLANS[planKey] || PLANS.standard;
   const totalSec = scenes.reduce((a, s) => a + (s.durationSec || 0), 0);
-  let budget = motionBudgetSeconds(plan, totalSec);
-  let lipsyncLeft = plan.maxLipsyncScenes;
+  let budget = Math.ceil(totalSec * MAX_MOTION_RATIO);
+  let lipsyncLeft = lipsyncAllowance(plan, totalSec);
 
   const result = scenes.map((s, i) => {
     const sc = scores.get(s.index ?? i) || {};
@@ -141,53 +154,37 @@ export function enforceBudget({ scenes, scores, planKey = "standard" }) {
       audioType: baseAudioType(s),
       camera: sc.camera || cameraFor(s, i),
       motionScore: sc.motionScore || 0,
-      motionPrompt: sc.motionPrompt || s.action || "",
+      motionPrompt: sc.motionPrompt || actingPrompt(s),
       clipSeconds: 0,
       lipsync: false,
     };
   });
+  const sceneOf = (r) => scenes.find((s, i) => (s.index ?? i) === r.index);
+  const durOf = (r) => sceneOf(r)?.durationSec || LIMITS.avgSceneSeconds;
+  const needsMotion = (r) => {
+    const s = sceneOf(r);
+    return (s.characters || []).length > 0 || Boolean(s.action) || r.motionScore >= LIMITS.motionScoreThreshold;
+  };
 
-  // Opening scenes decide retention — give them a bonus.
-  const effScore = (r) => r.motionScore + (r.index <= 2 ? 2 : 0);
-
-  // 1) Lip sync picks (each also needs a motion clip under it).
-  const lipCandidates = result
-    .filter((r, i) => lipsyncEligible(scenes[i]) && (scores.get(r.index)?.lipsync || r.motionScore >= 5))
-    .sort((a, b) => effScore(b) - effScore(a));
-  for (const r of lipCandidates) {
-    if (lipsyncLeft <= 0) break;
-    const clip = 6; // talking clips are short; lip sync loops/bounces to cover the audio
+  // 1) Animate every shot that needs it, in story order (cap is a safety net only).
+  for (const r of result) {
+    if (!needsMotion(r)) continue;
+    const clip = clipLengthFor(durOf(r));
     if (budget < clip) break;
     r.visualType = "MOTION";
     r.clipSeconds = clip;
-    r.lipsync = true;
-    r.audioType = "LIPSYNC";
-    if (!r.motionPrompt) r.motionPrompt = "the character talks naturally with subtle head and hand movement, steady camera";
     budget -= clip;
-    lipsyncLeft--;
   }
 
-  // 2) Motion by score. First pass: 6s clips, so as MANY key scenes as possible move
-  //    (a slow camera move on the clip's last frame covers the rest of the scene).
-  const durOf = (r) => scenes.find((s, i) => (s.index ?? i) === r.index)?.durationSec || LIMITS.avgSceneSeconds;
-  const motionCandidates = result
-    .filter((r) => r.visualType === "STILL" && effScore(r) >= LIMITS.motionScoreThreshold)
-    .sort((a, b) => effScore(b) - effScore(a) || a.index - b.index);
-  for (const r of motionCandidates) {
-    if (budget < 6) break;
-    r.visualType = "MOTION";
-    r.clipSeconds = 6;
-    if (!r.motionPrompt) r.motionPrompt = "subtle natural motion, cinematic camera movement";
-    budget -= 6;
-  }
-  // Second pass: leftover budget upgrades long, high-scoring scenes to 10s clips.
-  const upgradable = result
-    .filter((r) => r.visualType === "MOTION" && !r.lipsync && r.clipSeconds === 6 && durOf(r) > 7.5)
-    .sort((a, b) => effScore(b) - effScore(a) || a.index - b.index);
-  for (const r of upgradable) {
-    if (budget < 4) break;
-    r.clipSeconds = 10;
-    budget -= 4;
+  // 2) Lip sync on the best dialogue close-ups that are already animated.
+  const lipCandidates = result
+    .filter((r) => r.visualType === "MOTION" && lipsyncEligible(sceneOf(r)))
+    .sort((a, b) => Number(scores.get(b.index)?.lipsync || 0) - Number(scores.get(a.index)?.lipsync || 0) || b.motionScore - a.motionScore || a.index - b.index);
+  for (const r of lipCandidates) {
+    if (lipsyncLeft <= 0) break;
+    r.lipsync = true;
+    r.audioType = "LIPSYNC";
+    lipsyncLeft--;
   }
 
   return result;

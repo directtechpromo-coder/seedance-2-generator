@@ -49,32 +49,41 @@ export const USD_PER_CREDIT = 0.1;
 // 1.0 = charge exactly the API cost (no margin). Set ENGINE_MARKUP=2 for 100% margin.
 export const MARKUP = Number(process.env.ENGINE_MARKUP || 1.0);
 
-// Quality plans for Cinema Mode. Story Mode ignores motion/lipsync budgets.
-// Motion budget = max(minMotionSeconds, motionSecondsPer10Min scaled to the video length),
-// so short videos still get real moving scenes.
+// Quality plans for Cinema Mode. Story Mode ignores these.
+// Cinema Mode animates EVERY shot that has a character or an action, so the
+// characters really act. Only empty establishing shots (a place, an object)
+// stay as a still image with a camera move. Plans differ in video resolution
+// and how many dialogue shots get real lip sync.
 export const PLANS = {
   economy: {
     label: "Economy",
-    motionSecondsPer10Min: 60,
-    minMotionSeconds: 12, // at least 2 moving scenes, even in a 1-minute video
-    maxLipsyncScenes: 0,
     videoResolution: "512P",
+    lipsyncPer10Min: 0,
+    minLipsync: 0,
   },
   standard: {
     label: "Standard",
-    motionSecondsPer10Min: 150,
-    minMotionSeconds: 18,
-    maxLipsyncScenes: 3,
     videoResolution: "768P",
+    lipsyncPer10Min: 6,
+    minLipsync: 1,
   },
   premium: {
     label: "Premium",
-    motionSecondsPer10Min: 300,
-    minMotionSeconds: 24,
-    maxLipsyncScenes: 8,
     videoResolution: "768P",
+    lipsyncPer10Min: 30,
+    minLipsync: 3,
   },
 };
+
+/** How many lip-synced shots a video of `totalSec` gets on this plan. */
+export function lipsyncAllowance(plan, totalSec) {
+  if (!plan.lipsyncPer10Min) return 0;
+  return Math.max(plan.minLipsync || 0, Math.round((plan.lipsyncPer10Min * totalSec) / 600));
+}
+
+// Safety cap: total generated clip seconds may not exceed this multiple of the
+// video length (clips are 6s/10s, so they round up past the shot length).
+export const MAX_MOTION_RATIO = 1.6;
 
 export const LIMITS = {
   minMinutes: 1,

@@ -76,42 +76,50 @@ await test("lip sync eligibility rules", () => {
   );
 });
 
-await test("budget is never exceeded and highest scores win", () => {
+await test("cinema: every character/action shot acts, empty establishing shots stay still", () => {
   const scenes = Array.from({ length: 60 }, (_, i) => ({
     index: i,
-    durationSec: 10,
+    durationSec: i % 3 === 0 ? 5 : 9,
     narration: i % 7 === 0 ? "" : "text",
     dialogue: i % 7 === 0 ? [{ character: "raza", line: "hello" }] : [],
-    characters: ["raza"],
+    characters: i % 10 === 5 ? [] : ["raza"], // every 10th shot is an empty place
     shot: i % 7 === 0 ? "close-up" : "medium",
     action: "",
   }));
-  const scores = new Map(scenes.map((s) => [s.index, { motionScore: (s.index * 37) % 11, lipsync: s.index % 7 === 0, motionPrompt: "m", camera: "zoom_in" }]));
+  const scores = new Map(scenes.map((s) => [s.index, { motionScore: 2, lipsync: s.index % 7 === 0, motionPrompt: "", camera: "zoom_in" }]));
+  const totalSec = scenes.reduce((a, s) => a + s.durationSec, 0);
   for (const planKey of ["economy", "standard", "premium"]) {
     const plan = enforceBudget({ scenes, scores, planKey });
-    const used = plan.reduce((a, p) => a + p.clipSeconds, 0);
-    const cap = { economy: 60, standard: 150, premium: 300 }[planKey]; // 600s video: scaled budget > minimum
-    assert.ok(used <= cap, `${planKey}: used ${used}s > cap ${cap}s`);
-    const lips = plan.filter((p) => p.lipsync).length;
-    assert.ok(lips <= { economy: 0, standard: 3, premium: 8 }[planKey], `${planKey}: too many lipsync (${lips})`);
     for (const p of plan) {
+      const sc = scenes[p.index];
+      if (sc.characters.length) {
+        assert.equal(p.visualType, "MOTION", `${planKey}: character shot ${p.index} must act`);
+        assert.equal(p.clipSeconds, sc.durationSec <= 6.3 ? 6 : 10, "clip covers the shot");
+        assert.ok(p.motionPrompt.length > 10, "has an acting direction");
+      } else assert.equal(p.visualType, "STILL", `${planKey}: empty establishing shot stays still`);
       if (p.lipsync) assert.equal(p.visualType, "MOTION", "lipsync needs a motion clip");
-      if (p.visualType === "STILL") assert.equal(p.clipSeconds, 0);
     }
-    // Every motion scene must score at least as high as every skipped candidate that would have fit.
-    const motion = plan.filter((p) => p.visualType === "MOTION" && !p.lipsync).map((p) => p.motionScore + (p.index <= 2 ? 2 : 0));
-    const skipped = plan.filter((p) => p.visualType === "STILL" && p.motionScore + (p.index <= 2 ? 2 : 0) >= 6).map((p) => p.motionScore + (p.index <= 2 ? 2 : 0));
-    if (motion.length && skipped.length) assert.ok(Math.min(...motion) >= Math.max(...skipped), `${planKey}: a lower score got motion over a higher one`);
+    const used = plan.reduce((a, p) => a + p.clipSeconds, 0);
+    assert.ok(used <= Math.ceil(totalSec * 1.6), `${planKey}: safety cap exceeded`);
+    const lips = plan.filter((p) => p.lipsync).length;
+    const allowed = { economy: 0, standard: Math.round((6 * totalSec) / 600), premium: Math.round((30 * totalSec) / 600) }[planKey];
+    assert.ok(lips <= allowed, `${planKey}: too many lipsync (${lips} > ${allowed})`);
+    if (planKey !== "economy") assert.ok(lips > 0, `${planKey}: should lip-sync some dialogue`);
   }
 });
 
-await test("short cinema videos still get motion (plan minimum)", () => {
-  const scenes = Array.from({ length: 6 }, (_, i) => ({ index: i, durationSec: 8, narration: "x", dialogue: [], characters: [], shot: "medium", action: "runs" }));
-  const scores = new Map(scenes.map((s) => [s.index, { motionScore: 8, motionPrompt: "m", camera: "zoom_in", lipsync: false }]));
-  const eco = enforceBudget({ scenes, scores, planKey: "economy" }); // 48s video
-  const used = eco.reduce((a, p) => a + p.clipSeconds, 0);
-  assert.equal(eco.filter((p) => p.visualType === "MOTION").length, 2, "economy gets 2 moving scenes in a short video");
-  assert.ok(used <= 12, `economy minimum is 12s, used ${used}`);
+await test("short cinema video: still every character shot acts; premium lip-syncs", () => {
+  const scenes = [
+    { index: 0, durationSec: 4, narration: "x", dialogue: [], characters: [], shot: "wide", action: "" },
+    { index: 1, durationSec: 7, narration: "", dialogue: [{ character: "raza", line: "Dekho!" }], characters: ["raza"], shot: "close-up", action: "" },
+    { index: 2, durationSec: 5, narration: "x", dialogue: [], characters: ["raza", "coco"], shot: "medium", action: "" },
+  ];
+  const scores = new Map(scenes.map((s) => [s.index, { motionScore: 1, motionPrompt: "", camera: "zoom_in", lipsync: s.index === 1 }]));
+  const eco = enforceBudget({ scenes, scores, planKey: "economy" });
+  assert.deepEqual(eco.map((p) => p.visualType), ["STILL", "MOTION", "MOTION"]);
+  assert.ok(!eco.some((p) => p.lipsync), "economy has no lip sync");
+  const pre = enforceBudget({ scenes, scores, planKey: "premium" });
+  assert.equal(pre[1].audioType, "LIPSYNC", "premium lip-syncs the dialogue close-up");
 });
 
 await test("story plan is all stills with camera moves", () => {
@@ -287,11 +295,8 @@ await test("cinema mode: full episode renders, budget + lipsync + QA regeneratio
   assert.ok(Math.abs(dur - sum) < 0.6, `final ${dur.toFixed(2)}s vs scenes ${sum.toFixed(2)}s`);
 
   const motion = p.scenes.filter((s) => s.visualType === "MOTION");
-  assert.ok(motion.length >= 2, "action scenes became motion");
-  const budget = Math.max(24, Math.round((300 * sum) / 600)); // premium = 300s per 10 min, min 24s
-  const used = p.scenes.reduce((a, s) => a + (s.clipSeconds || 0), 0);
-  assert.ok(used <= budget, `motion ${used}s exceeds budget ${budget}s`);
-  assert.ok(p.scenes.filter((s) => !s.action && s.audioType !== "LIPSYNC").every((s) => s.visualType === "STILL"), "calm scenes stay still");
+  assert.ok(p.scenes.filter((s) => s.characters.length).every((s) => s.visualType === "MOTION"), "every character shot acts");
+  assert.ok(p.scenes.filter((s) => !s.characters.length && !s.action).every((s) => s.visualType === "STILL"), "empty establishing shot stays still");
   assert.ok(motion.every((s) => s.videoUrl));
   const lip = p.scenes.find((s) => s.audioType === "LIPSYNC");
   assert.ok(lip && lip.lipsyncUrl && lip.index === 1, "close-up single-speaker dialogue got lip sync");
@@ -300,7 +305,7 @@ await test("cinema mode: full episode renders, budget + lipsync + QA regeneratio
   assert.equal(p.scenes[3].qaScore, 9, "regenerated image accepted");
   assert.ok(logs.some((l) => l.includes("scene 2 clip QA 3/10")), "clip QA ran");
   assert.ok(p.scenes[2].videoUrl, "clip regenerated after QA fail");
-  assert.equal(p.scenes[4].visualType, "MOTION", "plan minimum gives every action scene motion in a short video");
+  assert.equal(p.scenes[4].visualType, "MOTION", "action scene acts");
   assert.ok(p.captionsUrl && p.thumbnailUrl);
   const srt = await fs.readFile(new URL(p.captionsUrl).pathname, "utf8");
   assert.match(srt, /Sara! Idhar aao/);

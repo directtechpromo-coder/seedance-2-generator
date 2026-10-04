@@ -165,22 +165,22 @@ function CreateForm({ onCreated }) {
           value={form.mode}
           onChange={set("mode")}
           options={[
-            { value: "story", label: "Story Mode", hint: "Images + camera moves" },
-            { value: "cinema", label: "Cinema Mode", hint: "AI picks motion scenes" },
+            { value: "story", label: "Story Mode", hint: "Images + camera moves (cheapest)" },
+            { value: "cinema", label: "Cinema Mode", hint: "Characters act in every scene" },
           ]}
         />
       </div>
 
       {form.mode === "cinema" && (
         <div>
-          <span style={C.label}>Motion budget</span>
+          <span style={C.label}>Video quality</span>
           <Segmented
             value={form.plan}
             onChange={set("plan")}
             options={[
-              { value: "economy", label: "Economy", hint: "~1 min motion /10" },
-              { value: "standard", label: "Standard", hint: "~2.5 min + 3 lip-sync" },
-              { value: "premium", label: "Premium", hint: "~5 min + 8 lip-sync" },
+              { value: "economy", label: "Economy", hint: "Full acting · 512p" },
+              { value: "standard", label: "Standard", hint: "Full acting · HD 768p" },
+              { value: "premium", label: "Premium", hint: "HD + lip-sync on dialogue" },
             ]}
           />
         </div>

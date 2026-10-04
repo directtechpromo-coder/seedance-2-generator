@@ -2,7 +2,7 @@
 // Up-front cost estimate (shown to the user + used to reserve credits) and
 // credit conversion. Real spend is tracked per call in the project's cost ledger.
 
-import { LIMITS, MARKUP, PLANS, PRICES, USD_PER_CREDIT } from "./config.js";
+import { LIMITS, MARKUP, PLANS, PRICES, USD_PER_CREDIT, lipsyncAllowance } from "./config.js";
 
 const round = (n) => Math.round(n * 1000) / 1000;
 
@@ -17,10 +17,12 @@ export function estimateProject({ mode = "cinema", planKey = "standard", minutes
 
   const images = (scenes + characters) * PRICES.imagePerImage * retryFactor;
 
-  const motionSec = mode === "cinema" ? Math.max(plan.minMotionSeconds || 0, (plan.motionSecondsPer10Min * minutes) / 10) : 0;
+  // Cinema animates ~85% of the runtime (all character/action shots); 6s/10s
+  // clips round up past the shot length by ~25% on average.
+  const motionSec = mode === "cinema" ? minutes * 60 * 0.85 * 1.25 : 0;
   const motion = motionSec * (PRICES.i2vPerSecond[plan.videoResolution] || 0.045) * (qa ? 1.1 : 1);
 
-  const lipsyncScenes = mode === "cinema" ? plan.maxLipsyncScenes : 0;
+  const lipsyncScenes = mode === "cinema" ? lipsyncAllowance(plan, minutes * 60) : 0;
   const lipsync = lipsyncScenes * 8 * PRICES.lipsyncPerSecond;
 
   const chars = minutes * 60 * (LIMITS.wordsPerSecond[language] || 2.4) * 6;
